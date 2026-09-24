@@ -8,15 +8,80 @@
 </head>
 <body>
 
-<div id="library">
+<div id="homeScreen">
+  <div class="home-wrap">
+    <div class="home-hero">
+      <p class="home-eyebrow">100권 읽기 프로젝트</p>
+      <h1>지금까지 <span id="homeCount">0</span>권</h1>
+      <p class="home-sub" id="homeSub">목표까지 100권 남았어요</p>
+    </div>
+
+    <div class="home-ring-row">
+      <div class="ring-wrap home-ring">
+        <svg width="180" height="180">
+          <circle cx="90" cy="90" r="78" stroke="var(--paper-dim)" stroke-width="14" fill="none"/>
+          <circle id="homeRingFg" cx="90" cy="90" r="78" stroke="var(--cloth)" stroke-width="14" fill="none" stroke-linecap="round"/>
+        </svg>
+        <div class="ring-pct home-ring-pct" id="homeRingPct">0%</div>
+      </div>
+      <div class="home-stats">
+        <div class="home-stat"><span class="hs-num" id="homeDone">0</span><span class="hs-label">완독</span></div>
+        <div class="home-stat"><span class="hs-num" id="homeProgress">0</span><span class="hs-label">읽는 중</span></div>
+        <div class="home-stat"><span class="hs-num" id="homeHours">0</span><span class="hs-label">총 독서시간</span></div>
+      </div>
+    </div>
+
+    <div class="home-baseline">
+      서재 기록 이전에 읽은 책
+      <input type="number" id="baselineInput" min="0" value="0" />
+      권 (직접 입력 가능)
+    </div>
+
+    <div class="home-shelf" id="homeShelf"></div>
+
+    <button class="home-cta" id="enterLibraryBtn" type="button">나의 서재 들어가기 →</button>
+  </div>
+</div>
+
+<div id="library" class="hidden">
   <div class="lib-header">
     <div>
+      <button class="home-link" id="backHomeBtn" type="button">← 홈</button>
       <h1>나의 서재</h1>
-      <p>100권 프로젝트</p>
+      <p>책 한 권, 프로젝트 하나</p>
     </div>
-    <div class="count sans" id="libCount"></div>
+    <div class="data-actions">
+      <button class="icon-btn" id="exportBtn" type="button">내보내기</button>
+      <button class="icon-btn" id="importBtn" type="button">가져오기</button>
+      <input type="file" id="importFile" accept="application/json" style="display:none" />
+    </div>
   </div>
+
+  <div class="heatmap-wrap">
+    <h3>독서 활동</h3>
+    <div class="heatmap-grid" id="heatmapGrid"></div>
+  </div>
+
+  <div class="toolbar">
+    <input type="text" id="searchInput" placeholder="제목·저자 검색" />
+    <div class="chip-group" id="statusChips">
+      <button class="chip active" data-status="all" type="button">전체</button>
+      <button class="chip" data-status="not_started" type="button">시작 전</button>
+      <button class="chip" data-status="in_progress" type="button">읽는 중</button>
+      <button class="chip" data-status="done" type="button">완료</button>
+    </div>
+    <select id="sortSelect">
+      <option value="updated">최근 업데이트순</option>
+      <option value="progress">진행률순</option>
+      <option value="title">제목순</option>
+    </select>
+    <button class="icon-btn active" id="viewGridBtn" type="button">그리드</button>
+    <button class="icon-btn" id="viewBoardBtn" type="button">보드</button>
+  </div>
+
   <div class="grid" id="grid"></div>
+  <div class="board hidden" id="board"></div>
+  <div class="count sans" id="libCount" style="margin-top:14px;"></div>
 </div>
 
 <div id="overlay"><div id="overlay-inner"></div></div>
@@ -53,9 +118,16 @@
 
 <script>
 const STORAGE_KEY = "book-library-v1";
-let data = { books: [] };
+let data = { books: [], baselineBooks: 0 };
 let currentBookId = null;
 let cardRectCache = null;
+let lastFetchedCover = null;
+
+// view/filter state
+let viewMode = "grid";      // grid | board
+let filterStatus = "all";   // all | not_started | in_progress | done
+let sortBy = "updated";     // updated | progress | title
+let searchQuery = "";
 
 // timer state (in-memory only, per open book)
 let timer = { running:false, startTs:null, elapsed:0 };
@@ -95,7 +167,8 @@ async function loadData(){
     const raw = localStorage.getItem(STORAGE_KEY);
     if(raw) data = JSON.parse(raw);
   }catch(e){ /* first run */ }
-  renderLibrary();
+  if(typeof data.baselineBooks !== "number") data.baselineBooks = 0;
+  showHome();
 }
 async function saveData(){
   try{
@@ -103,45 +176,251 @@ async function saveData(){
   }catch(e){ console.error("save failed", e); }
 }
 
-function renderLibrary(){
-  const grid = document.getElementById("grid");
-  const count = data.books.length;
-  document.getElementById("libCount").textContent = count > 0 ? `${count}권 진행 중` : "";
+function starsHtml(rating, mini){
+  rating = rating || 0;
+  let s = "";
+  for(let i=1;i<=5;i++) s += i<=rating ? "★" : "☆";
+  return s;
+}
+
+function getFilteredSortedBooks(){
+  let list = data.books.slice();
+  if(filterStatus !== "all") list = list.filter(b=>b.status===filterStatus);
+  if(searchQuery){
+    const q = searchQuery.toLowerCase();
+    list = list.filter(b => (b.title||"").toLowerCase().includes(q) || (b.author||"").toLowerCase().includes(q));
+  }
+  if(sortBy === "updated") list.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+  else if(sortBy === "progress") list.sort((a,b)=>pctOf(b)-pctOf(a));
+  else if(sortBy === "title") list.sort((a,b)=>(a.title||"").localeCompare(b.title||"", "ko"));
+  return list;
+}
+
+function renderHome(){
+  data.baselineBooks = data.baselineBooks || 0;
+  const doneCount = data.books.filter(b=>b.status==="done").length;
+  const inProgressCount = data.books.filter(b=>b.status==="in_progress").length;
+  const totalMinutes = data.books.flatMap(b=>b.sessions||[]).reduce((a,s)=>a+s.minutes,0);
+  const totalHours = Math.round(totalMinutes/60*10)/10;
+  const total = Math.min(100, data.baselineBooks + doneCount);
+  const remaining = Math.max(0, 100 - total);
+
+  document.getElementById("homeCount").textContent = data.baselineBooks + doneCount;
+  document.getElementById("homeSub").textContent = remaining === 0
+    ? "100권 목표를 달성했어요 🎉"
+    : `목표까지 ${remaining}권 남았어요`;
+  document.getElementById("homeDone").textContent = doneCount;
+  document.getElementById("homeProgress").textContent = inProgressCount;
+  document.getElementById("homeHours").textContent = totalHours;
+
+  const circumference = 2*Math.PI*78;
+  const dash = circumference * (total/100);
+  const ringFg = document.getElementById("homeRingFg");
+  ringFg.setAttribute("stroke-dasharray", circumference);
+  ringFg.setAttribute("stroke-dashoffset", circumference-dash);
+  document.getElementById("homeRingPct").textContent = total + "%";
+
+  const bi = document.getElementById("baselineInput");
+  if(document.activeElement !== bi) bi.value = data.baselineBooks;
+
+  const shelf = document.getElementById("homeShelf");
+  let shelfHtml = "";
+  for(let i=0;i<100;i++){
+    shelfHtml += `<div class="shelf-mark ${i<total ? "filled":""}"></div>`;
+  }
+  shelf.innerHTML = shelfHtml;
+}
+
+function showHome(){
+  document.getElementById("homeScreen").classList.remove("hidden");
+  document.getElementById("library").classList.add("hidden");
+  renderHome();
+}
+function showLibrary(){
+  document.getElementById("homeScreen").classList.add("hidden");
+  document.getElementById("library").classList.remove("hidden");
+  renderLibrary();
+}
+
+function renderHeatmap(){
+  const el = document.getElementById("heatmapGrid");
+  const allSessions = data.books.flatMap(b => b.sessions||[]);
+  const byDate = {};
+  allSessions.forEach(s=>{ byDate[s.date] = (byDate[s.date]||0) + s.minutes; });
+
+  const days = 91;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const start = new Date(today); start.setDate(start.getDate() - (days-1));
+  // align to Monday
+  const startDay = (start.getDay()+6)%7;
+  start.setDate(start.getDate()-startDay);
 
   let html = "";
-  data.books.slice().sort((a,b)=> (b.updatedAt||0) - (a.updatedAt||0)).forEach(b=>{
-    const pct = pctOf(b);
-    const color = b.coverColor || hashColor(b.title || b.id);
-    const totalMinutes = (b.sessions||[]).reduce((a,s)=>a+s.minutes,0);
-    const timeStr = totalMinutes >= 60 ? `${Math.floor(totalMinutes/60)}시간 ${totalMinutes%60}분` : `${totalMinutes}분`;
-    const bottomLine = b.status === "done"
-      ? `완료 · 총 ${timeStr}`
-      : `${b.startDate ? fmtDate(b.startDate) : "—"}${b.endDate ? " → "+fmtDate(b.endDate) : ""}`;
-    html += `
-      <div class="card" data-id="${b.id}" style="background:${color}">
-        <span class="status-badge sans">${statusLabel(b.status)}</span>
-        <div>
-          <div class="pct">${pct}%</div>
-          <div class="title">${escapeHtml(b.title || "제목 없음")}</div>
-          ${b.author ? `<div class="dates sans">${escapeHtml(b.author)}</div>` : ""}
-          <div class="dates sans">${bottomLine}</div>
+  const cursor = new Date(start);
+  const totalCells = Math.ceil((today-start)/86400000)+1;
+  for(let i=0;i<totalCells;i++){
+    const key = cursor.getFullYear()+"-"+String(cursor.getMonth()+1).padStart(2,"0")+"-"+String(cursor.getDate()).padStart(2,"0");
+    const minutes = byDate[key] || 0;
+    let level = "";
+    if(minutes>0 && minutes<=15) level="l1";
+    else if(minutes<=30) level="l2";
+    else if(minutes<=60) level="l3";
+    else if(minutes>60) level="l4";
+    html += `<div class="heatmap-cell ${level}" title="${key}${minutes?' · '+minutes+'분':''}"></div>`;
+    cursor.setDate(cursor.getDate()+1);
+  }
+  el.innerHTML = html;
+}
+
+function renderLibrary(){
+  renderHeatmap();
+
+  const list = getFilteredSortedBooks();
+  const count = data.books.length;
+  document.getElementById("libCount").textContent = count > 0 ? `${count}권 기록 중` : "";
+
+  const grid = document.getElementById("grid");
+  const board = document.getElementById("board");
+
+  if(viewMode === "grid"){
+    grid.classList.remove("hidden"); board.classList.add("hidden");
+    let html = "";
+    list.forEach(b=>{
+      const pct = pctOf(b);
+      const color = b.coverColor || hashColor(b.title || b.id);
+      const totalMinutes = (b.sessions||[]).reduce((a,s)=>a+s.minutes,0);
+      const timeStr = totalMinutes >= 60 ? `${Math.floor(totalMinutes/60)}시간 ${totalMinutes%60}분` : `${totalMinutes}분`;
+      const bottomLine = b.status === "done"
+        ? `완료 · 총 ${timeStr}`
+        : `${b.startDate ? fmtDate(b.startDate) : "시작 전"}${b.endDate ? " → "+fmtDate(b.endDate) : ""}`;
+      const initial = (b.title||"?").trim().charAt(0).toUpperCase();
+      html += `
+        <div class="card" data-id="${b.id}">
+          <div class="card-cover" style="background:${color}">
+            ${b.coverImage ? `<img class="cover-img" src="${b.coverImage}" alt="" />` : `<span class="cover-initial">${escapeHtml(initial)}</span>`}
+            <span class="pct-badge">${pct}%</span>
+          </div>
+          <div class="card-body">
+            <div class="card-title">${escapeHtml(b.title || "제목 없음")}</div>
+            ${b.author ? `<div class="card-author sans">${escapeHtml(b.author)}</div>` : ""}
+            <div class="card-props">
+              <span class="pill pill-${b.status}">${statusLabel(b.status)}</span>
+              ${b.rating ? `<span class="stars-mini">${starsHtml(b.rating)}</span>` : ""}
+            </div>
+            ${(b.genres&&b.genres.length) ? `<div class="genre-tags">${b.genres.slice(0,3).map(g=>`<span class="genre-tag">${escapeHtml(g)}</span>`).join("")}</div>` : ""}
+            <div class="card-bottom sans">${bottomLine}</div>
+          </div>
         </div>
+      `;
+    });
+    html += `
+      <div class="card new" id="newBookCard">
+        <div class="plus">+</div>
+        <span class="label sans">새 책 추가</span>
       </div>
     `;
-  });
-  html += `
-    <div class="card new" id="newBookCard">
-      <div class="plus">+</div>
-      <span class="label sans">새 책 추가</span>
-    </div>
-  `;
-  grid.innerHTML = html;
-
-  grid.querySelectorAll(".card[data-id]").forEach(el=>{
-    el.addEventListener("click", ()=> openBook(el.dataset.id, el));
-  });
-  document.getElementById("newBookCard").addEventListener("click", openAddModal);
+    grid.innerHTML = html;
+    grid.querySelectorAll(".card[data-id]").forEach(el=>{
+      el.addEventListener("click", ()=> openBook(el.dataset.id, el));
+    });
+    document.getElementById("newBookCard").addEventListener("click", openAddModal);
+  }else{
+    grid.classList.add("hidden"); board.classList.remove("hidden");
+    const cols = [
+      {key:"not_started", label:"시작 전"},
+      {key:"in_progress", label:"읽는 중"},
+      {key:"done", label:"완료"}
+    ];
+    let html = "";
+    cols.forEach(col=>{
+      const items = list.filter(b=>b.status===col.key);
+      html += `<div class="board-col"><h4>${col.label} · ${items.length}</h4>`;
+      items.forEach(b=>{
+        html += `<div class="board-card" data-id="${b.id}">
+          <div class="bc-title">${escapeHtml(b.title||"제목 없음")}</div>
+          <div class="bc-pct">${pctOf(b)}%</div>
+        </div>`;
+      });
+      html += `</div>`;
+    });
+    board.innerHTML = html;
+    board.querySelectorAll(".board-card").forEach(el=>{
+      el.addEventListener("click", ()=> openBook(el.dataset.id, el));
+    });
+  }
 }
+
+function exportData(){
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type:"application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `book-library-backup-${todayStr()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importData(file){
+  const reader = new FileReader();
+  reader.onload = async (e)=>{
+    try{
+      const parsed = JSON.parse(e.target.result);
+      if(!parsed || !Array.isArray(parsed.books)) throw new Error("invalid");
+      if(!confirm("가져온 파일로 지금 기록을 덮어쓸까요? 되돌릴 수 없어요.")) return;
+      data = parsed;
+      data.baselineBooks = data.baselineBooks || 0;
+      await saveData();
+      renderHome();
+      renderLibrary();
+      alert("복원됐어요.");
+    }catch(err){
+      alert("파일을 읽지 못했어요. 올바른 백업 파일인지 확인해 주세요.");
+    }
+  };
+  reader.readAsText(file);
+}
+
+document.getElementById("baselineInput").addEventListener("change", async (e)=>{
+  data.baselineBooks = Math.max(0, parseInt(e.target.value)||0);
+  await saveData();
+  renderHome();
+});
+document.getElementById("enterLibraryBtn").addEventListener("click", showLibrary);
+document.getElementById("backHomeBtn").addEventListener("click", showHome);
+document.getElementById("searchInput").addEventListener("input", (e)=>{
+  searchQuery = e.target.value.trim();
+  renderLibrary();
+});
+document.getElementById("statusChips").addEventListener("click", (e)=>{
+  const btn = e.target.closest(".chip");
+  if(!btn) return;
+  filterStatus = btn.dataset.status;
+  document.querySelectorAll("#statusChips .chip").forEach(c=>c.classList.remove("active"));
+  btn.classList.add("active");
+  renderLibrary();
+});
+document.getElementById("sortSelect").addEventListener("change", (e)=>{
+  sortBy = e.target.value;
+  renderLibrary();
+});
+document.getElementById("viewGridBtn").addEventListener("click", ()=>{
+  viewMode = "grid";
+  document.getElementById("viewGridBtn").classList.add("active");
+  document.getElementById("viewBoardBtn").classList.remove("active");
+  renderLibrary();
+});
+document.getElementById("viewBoardBtn").addEventListener("click", ()=>{
+  viewMode = "board";
+  document.getElementById("viewBoardBtn").classList.add("active");
+  document.getElementById("viewGridBtn").classList.remove("active");
+  renderLibrary();
+});
+document.getElementById("exportBtn").addEventListener("click", exportData);
+document.getElementById("importBtn").addEventListener("click", ()=> document.getElementById("importFile").click());
+document.getElementById("importFile").addEventListener("change", (e)=>{
+  if(e.target.files[0]) importData(e.target.files[0]);
+  e.target.value = "";
+});
 
 function openAddModal(){
   document.getElementById("fSearchQuery").value = "";
@@ -151,6 +430,7 @@ function openAddModal(){
   document.getElementById("fTranslator").value = "";
   document.getElementById("fPages").value = "";
   document.getElementById("fetchStatus").textContent = "";
+  lastFetchedCover = null;
   document.getElementById("addModal").classList.remove("hidden");
 }
 function closeAddModal(){
@@ -172,7 +452,11 @@ async function fetchBookInfo(){
     document.getElementById("fAuthor").value = (info.authors || []).join(", ");
     document.getElementById("fPublisher").value = info.publisher || "";
     if(info.pageCount) document.getElementById("fPages").value = info.pageCount;
-    statusEl.textContent = "정보를 가져왔어요. 옮긴이나 페이지 수는 확인 후 필요하면 수정해 주세요.";
+    lastFetchedCover = info.imageLinks ? (info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || null) : null;
+    if(lastFetchedCover) lastFetchedCover = lastFetchedCover.replace("http://","https://");
+    statusEl.textContent = lastFetchedCover
+      ? "정보와 표지를 가져왔어요. 옮긴이나 페이지 수는 확인 후 필요하면 수정해 주세요."
+      : "정보를 가져왔어요 (표지 이미지는 없었어요). 옮긴이나 페이지 수는 확인해 주세요.";
   }catch(e){
     statusEl.textContent = "정보를 가져오지 못했어요. 직접 입력해 주세요.";
   }
@@ -196,6 +480,9 @@ async function confirmAddBook(){
     quotes: [],
     review: "",
     coverColor: COVER_PALETTE[data.books.length % COVER_PALETTE.length],
+    coverImage: lastFetchedCover,
+    rating: 0,
+    genres: [],
     updatedAt: Date.now()
   };
   data.books.push(book);
@@ -326,6 +613,24 @@ function renderDetail(){
     </div>
 
     <div class="detail-section">
+      <h3 class="sans">별점</h3>
+      <div class="stars-edit" id="ratingStars">
+        ${[1,2,3,4,5].map(i=>`<span class="star ${i<=(b.rating||0)?"filled":""}" data-val="${i}">★</span>`).join("")}
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3 class="sans">장르 / 태그</h3>
+      <div class="tag-input-row">
+        <input id="genreInput" placeholder="예: 에세이, 소설, 자기계발" />
+        <button class="secondary" id="addGenreBtn" type="button">추가</button>
+      </div>
+      <div class="tag-list">
+        ${(b.genres||[]).map(g=>`<span class="tag-chip">${escapeHtml(g)}<span class="x" data-genre="${escapeHtml(g)}">✕</span></span>`).join("")}
+      </div>
+    </div>
+
+    <div class="detail-section">
       <h3 class="sans">독서 타이머 · 누적 ${totalMinutesStr}</h3>
       <div class="timer-box">
         <div class="timer-display" id="timerDisplay">00:00:00</div>
@@ -398,6 +703,31 @@ function renderDetail(){
   document.getElementById("totalPageInput").addEventListener("change", async (e)=>{
     await updateBook({ totalPages: Math.max(0, parseInt(e.target.value)||0) });
     renderDetail();
+  });
+
+  document.getElementById("ratingStars").addEventListener("click", async (e)=>{
+    const star = e.target.closest(".star");
+    if(!star) return;
+    const val = parseInt(star.dataset.val);
+    await updateBook({ rating: (b.rating===val) ? 0 : val });
+    renderDetail();
+  });
+
+  document.getElementById("addGenreBtn").addEventListener("click", async ()=>{
+    const input = document.getElementById("genreInput");
+    const val = input.value.trim();
+    if(!val) return;
+    b.genres = b.genres || [];
+    if(!b.genres.includes(val)) b.genres.push(val);
+    await updateBook({});
+    renderDetail();
+  });
+  document.querySelectorAll("#overlay-inner .tag-chip .x").forEach(x=>{
+    x.addEventListener("click", async ()=>{
+      b.genres = (b.genres||[]).filter(g=>g!==x.dataset.genre);
+      await updateBook({});
+      renderDetail();
+    });
   });
 
   document.getElementById("timerToggle").addEventListener("click", ()=>{
