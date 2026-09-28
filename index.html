@@ -9,10 +9,21 @@
 </head>
 <body>
 
+<div id="sharedScreen" class="hidden">
+  <div class="home-wrap">
+    <p class="home-eyebrow">👀 친구의 서재 (공유 스냅샷)</p>
+    <h1 id="sharedOwnerName">서재</h1>
+    <p class="home-sub" id="sharedTotalText"></p>
+    <div class="grid" id="sharedGrid" style="margin-top:28px;"></div>
+    <p class="rc-note" style="margin-top:20px;">비공개로 둔 책은 보이지 않아요. 이 화면은 링크를 받은 시점의 스냅샷이라 실시간으로 바뀌지 않아요.</p>
+  </div>
+</div>
+<div id="sharedBookOverlay" class="hidden"></div>
+
 <div id="homeScreen">
   <div class="home-wrap">
     <div class="home-hero">
-      <p class="home-eyebrow">100권 읽기 프로젝트</p>
+      <p class="home-eyebrow" id="homeEyebrow">100권 읽기 프로젝트</p>
       <h1>지금까지 <span id="homeCount">0</span>권</h1>
       <p class="home-sub" id="homeSub">목표까지 100권 남았어요</p>
     </div>
@@ -112,6 +123,10 @@
       <h3>월별 완독 권수</h3>
       <div class="bar-chart" id="statsMonth"></div>
     </div>
+    <div class="stat-panel">
+      <h3>연도별 완독 <span class="stat-unit">(가장 많이 읽은 달 표시)</span></h3>
+      <div class="bar-chart" id="statsYear"></div>
+    </div>
     <div class="stat-panel stat-wide">
       <h3>장르별 권수</h3>
       <div id="statsGenre"></div>
@@ -135,6 +150,13 @@
     </select>
     <button class="icon-btn active" id="viewGridBtn" type="button">그리드</button>
     <button class="icon-btn" id="viewBoardBtn" type="button">보드</button>
+  </div>
+
+  <div class="toolbar share-toolbar">
+    <span class="share-hint sans">📖 왼쪽 위 눈 아이콘을 눌러 책마다 공개·비공개를 정해요 (기본은 비공개)</span>
+    <button class="icon-btn" id="markAllPublicBtn" type="button">전체 공개</button>
+    <button class="icon-btn" id="markAllPrivateBtn" type="button">전체 비공개</button>
+    <button class="icon-btn share-cta" id="openShareBtn" type="button">🔗 공유 링크</button>
   </div>
 
   <div class="grid" id="grid"></div>
@@ -169,6 +191,29 @@
     </div>
     <div class="modal-actions" style="justify-content:flex-end;">
       <button class="secondary" id="closeExportBtn" type="button">닫기</button>
+    </div>
+  </div>
+</div>
+
+<div id="shareModal" class="modal-overlay hidden">
+  <div class="modal-box">
+    <h3>공유 링크 만들기</h3>
+    <p class="fetch-status sans" style="margin-top:0;">
+      계정이나 서버 없이 작동하는 정적 사이트라, 진짜 "친구 코드" 로그인은 만들 수 없어요.
+      대신 <b>공개로 표시한 책들의 스냅샷</b>을 링크 하나에 담아드려요. 이 링크를 보낸 시점의 내용이 담기고,
+      나중에 책을 더 공개하거나 바꾸면 <b>다시 눌러서 링크를 새로 만들어</b> 보내야 해요.
+    </p>
+    <label>친구에게 보여줄 이름</label>
+    <input id="ownerNameInput" placeholder="예: 빈나의 서재" />
+    <label>공유 링크</label>
+    <textarea id="shareLinkArea" class="share-link-area" rows="3" readonly></textarea>
+    <div class="modal-actions">
+      <span class="fetch-status sans" id="shareCopyStatus"></span>
+      <div style="display:flex; gap:8px;">
+        <button class="secondary" id="closeShareBtn" type="button">닫기</button>
+        <button class="secondary" id="regenShareBtn" type="button">다시 만들기</button>
+        <button id="copyShareBtn" type="button">링크 복사</button>
+      </div>
     </div>
   </div>
 </div>
@@ -281,6 +326,7 @@ function pctOf(book){
 }
 
 async function loadData(){
+  if(tryRenderSharedFromHash()) return;
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
     if(raw) data = JSON.parse(raw);
@@ -407,8 +453,10 @@ function renderRewards(){
     : `${missed}일째 쉬는 중이라 책갈피가 흐려지고 있어요${dormant ? ` (잠든 책갈피 ${dormant}개)` : ""}. 사라지진 않아요 — 오늘 읽으면 모두 선명하게 돌아와요.`;
 
   // badges
-  const total = (data.baselineBooks||0) + data.books.filter(b=>b.status==="done").length;
-  const milestones = [1,5,10,25,50,100];
+  const total = totalReadCount();
+  const goalNow = getGoal(total);
+  const milestones = [1,5,10,25,50];
+  for(let m=100; m<=goalNow; m+=50) milestones.push(m);
   const early = earlyBadges();
   const sumDays = early.reduce((a,e)=>a+e.days, 0);
   let bh = milestones.map(m => `<div class="badge ${total>=m ? "on" : "locked"}"><div class="badge-icon">${total>=m ? "🏅" : "🔒"}</div><b>${m}권</b><span>${m===1 ? "첫 완독" : "달성"}</span></div>`).join("");
@@ -441,11 +489,18 @@ function renderRetro(year){
   const topG = Object.entries(gc).sort((a,b)=>b[1]-a[1]).slice(0,3);
   const quotes = done.flatMap(b => (b.quotes||[]).map(q => ({q,b}))).sort((x,y)=>(y.b.rating||0)-(x.b.rating||0)).slice(0,5);
   const takeaways = done.filter(b => b.takeaway);
+  const monthNames = ["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"];
+  const monthCounts = new Array(12).fill(0);
+  done.forEach(b => { monthCounts[parseInt(b.endDate.slice(5,7))-1]++; });
+  const bestIdx = monthCounts.indexOf(Math.max(...monthCounts));
   body.innerHTML = `
     <div class="retro-grid">
       <div class="retro-stat"><b>${done.length}</b><span>완독</span></div>
       <div class="retro-stat"><b>${Math.round(minutes/60*10)/10}</b><span>독서 시간</span></div>
       <div class="retro-stat"><b>${pages.toLocaleString()}</b><span>읽은 쪽수</span></div>
+    </div>
+    <div class="retro-sec"><h4>월별 완독 · 가장 많이 읽은 달 ${monthNames[bestIdx]} (${monthCounts[bestIdx]}권)</h4>
+      <div class="bar-chart retro-month-chart">${barChartHtml(monthNames.map((m,i)=>({label:m.replace("월",""), value:monthCounts[i]})))}</div>
     </div>
     <div class="retro-sec"><h4>최고 평점</h4>${best.length
       ? best.map(b=>`<div class="retro-line"><span class="rl-title">${escapeHtml(b.title)}</span><span class="stars-mini">${starsHtml(b.rating)}</span></div>`).join("")
@@ -462,29 +517,144 @@ function renderRetro(year){
   `;
 }
 
+function totalReadCount(){
+  return (data.baselineBooks||0) + data.books.filter(b=>b.status==="done").length;
+}
+function getGoal(total){
+  // 100 -> 200 -> 300 ... escalates once the previous block is fully reached
+  let g = 100;
+  while(total >= g) g += 100;
+  return g;
+}
+function encodeShare(obj){
+  return btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+}
+function decodeShare(str){
+  return JSON.parse(decodeURIComponent(escape(atob(str))));
+}
+function buildShareSnapshot(){
+  const publicBooks = data.books.filter(b => b.isPublic).map(b => ({
+    title:b.title, author:b.author, publisher:b.publisher, translator:b.translator,
+    status:b.status, currentPage:b.currentPage, totalPages:b.totalPages,
+    startDate:b.startDate, endDate:b.endDate, rating:b.rating||0, genres:b.genres||[],
+    quotes:b.quotes||[], review:b.review||"", takeaway:b.takeaway||"", coverImage:b.coverImage||null,
+    sessions:(b.sessions||[]).reduce((a,s)=>a+s.minutes,0)
+  }));
+  return {
+    ownerName: data.ownerName || "이름 없는 서재",
+    totalCount: totalReadCount(),
+    goal: getGoal(totalReadCount()),
+    books: publicBooks
+  };
+}
+function refreshShareLink(){
+  data.ownerName = document.getElementById("ownerNameInput").value.trim() || data.ownerName || "";
+  const snap = buildShareSnapshot();
+  const code = encodeShare(snap);
+  const url = location.origin + location.pathname + "#shared=" + code;
+  document.getElementById("shareLinkArea").value = url;
+  document.getElementById("shareCopyStatus").textContent = `공개된 책 ${snap.books.length}권 포함`;
+}
+function openShareModal(){
+  document.getElementById("ownerNameInput").value = data.ownerName || "";
+  refreshShareLink();
+  document.getElementById("shareModal").classList.remove("hidden");
+}
+
+function renderSharedCard(b, idx){
+  const pct = b.totalPages ? Math.max(0,Math.min(100,Math.round(b.currentPage/b.totalPages*100))) : 0;
+  const statusColor = STATUS_COLORS[b.status] || STATUS_COLORS.not_started;
+  const coverInner = b.coverImage
+    ? `<img class="cover-img" src="${b.coverImage}" alt="" /><span class="ring-badge">${ringSvg(pct,40,4,"rgba(255,255,255,0.35)","#ffffff","#ffffff")}</span>`
+    : ringSvg(pct, 64, 6, "rgba(255,255,255,0.25)", "#ffffff", "#ffffff");
+  return `
+    <div class="card" data-shared-idx="${idx}">
+      <div class="card-cover" style="background:${statusColor}">${coverInner}</div>
+      <div class="card-body">
+        <div class="card-title">${escapeHtml(b.title||"제목 없음")}</div>
+        ${b.author ? `<div class="card-author sans">${escapeHtml(b.author)}</div>` : ""}
+        <div class="card-props">
+          <span class="pill pill-${b.status}">${statusLabel(b.status)}</span>
+          ${b.rating ? `<span class="stars-mini">${starsHtml(b.rating)}</span>` : ""}
+        </div>
+        ${(b.genres&&b.genres.length) ? `<div class="genre-tags">${b.genres.slice(0,3).map(g=>`<span class="genre-tag">${escapeHtml(g)}</span>`).join("")}</div>` : ""}
+      </div>
+    </div>`;
+}
+
+function renderSharedBookDetail(b){
+  const overlay = document.getElementById("sharedBookOverlay");
+  const quotes = (b.quotes||[]).length
+    ? b.quotes.map(q=>`<div class="quote-item">“${escapeHtml(q.text)}”${q.page?`<div class="qpage-tag">p.${q.page}</div>`:""}</div>`).join("")
+    : `<p class="empty-hint sans">기록된 문구가 없어요.</p>`;
+  overlay.innerHTML = `
+    <div class="shared-detail-box">
+      <button class="back-btn sans" id="sharedBackBtn">← 서재로</button>
+      <h1 class="shared-detail-title">${escapeHtml(b.title||"제목 없음")}</h1>
+      <div class="book-meta-edit" style="pointer-events:none;">
+        ${b.author ? `<div class="meta-row"><span class="meta-label sans">작가</span><span>${escapeHtml(b.author)}</span></div>` : ""}
+        ${b.publisher ? `<div class="meta-row"><span class="meta-label sans">출판사</span><span>${escapeHtml(b.publisher)}</span></div>` : ""}
+        ${b.translator ? `<div class="meta-row"><span class="meta-label sans">옮긴이</span><span>${escapeHtml(b.translator)}</span></div>` : ""}
+      </div>
+      <p class="rc-note">${statusLabel(b.status)} · ${b.totalPages?Math.round(b.currentPage/b.totalPages*100):0}% ${b.startDate?(" · "+fmtDate(b.startDate)):""}${b.endDate?(" → "+fmtDate(b.endDate)):""} · 누적 ${b.sessions||0}분</p>
+      ${b.takeaway ? `<div class="detail-section"><h3 class="sans">이 책에서 얻은 것</h3><p>${escapeHtml(b.takeaway)}</p></div>` : ""}
+      <div class="detail-section"><h3 class="sans">좋았던 문구</h3>${quotes}</div>
+      <div class="detail-section"><h3 class="sans">독후감</h3><p class="r-review">${b.review ? escapeHtml(b.review).replace(/\n/g,"<br>") : `<span class="empty-hint">작성된 독후감이 없어요.</span>`}</p></div>
+    </div>`;
+  overlay.classList.remove("hidden");
+  document.getElementById("sharedBackBtn").addEventListener("click", ()=> overlay.classList.add("hidden"));
+}
+
+function tryRenderSharedFromHash(){
+  const hash = location.hash;
+  if(!hash.startsWith("#shared=")) return false;
+  try{
+    const snap = decodeShare(hash.slice(8));
+    document.getElementById("sharedOwnerName").textContent = snap.ownerName + "님의 서재";
+    document.getElementById("sharedTotalText").textContent = `전체 ${snap.totalCount}권 읽음 · 목표 ${snap.goal}권 · 그중 공개된 책 ${snap.books.length}권`;
+    const grid = document.getElementById("sharedGrid");
+    grid.innerHTML = snap.books.length
+      ? snap.books.map((b,i)=>renderSharedCard(b,i)).join("")
+      : `<p class="empty-hint sans">아직 공개된 책이 없어요.</p>`;
+    grid.querySelectorAll("[data-shared-idx]").forEach(el=>{
+      el.addEventListener("click", ()=> renderSharedBookDetail(snap.books[parseInt(el.dataset.sharedIdx)]));
+    });
+    document.getElementById("homeScreen").classList.add("hidden");
+    document.getElementById("library").classList.add("hidden");
+    document.getElementById("sharedScreen").classList.remove("hidden");
+    return true;
+  }catch(e){
+    console.error("공유 링크를 읽지 못했어요", e);
+    return false;
+  }
+}
+
 function renderHome(){
   data.baselineBooks = data.baselineBooks || 0;
   const doneCount = data.books.filter(b=>b.status==="done").length;
   const inProgressCount = data.books.filter(b=>b.status==="in_progress").length;
   const totalMinutes = data.books.flatMap(b=>b.sessions||[]).reduce((a,s)=>a+s.minutes,0);
   const totalHours = Math.round(totalMinutes/60*10)/10;
-  const total = Math.min(100, data.baselineBooks + doneCount);
-  const remaining = Math.max(0, 100 - total);
+  const total = data.baselineBooks + doneCount;
+  const goal = getGoal(total);
+  const blockStart = goal - 100;
+  const within = total - blockStart;
+  const remaining = Math.max(0, goal - total);
 
-  document.getElementById("homeCount").textContent = data.baselineBooks + doneCount;
-  document.getElementById("homeSub").textContent = remaining === 0
-    ? "100권 목표를 달성했어요 🎉"
-    : `목표까지 ${remaining}권 남았어요`;
+  document.getElementById("homeEyebrow").textContent = `${goal}권 읽기 프로젝트`;
+  document.getElementById("homeCount").textContent = total;
+  document.getElementById("homeSub").textContent =
+    `목표까지 ${remaining}권 남았어요 (목표 ${goal}권)`;
   document.getElementById("homeDone").textContent = doneCount;
   document.getElementById("homeProgress").textContent = inProgressCount;
   document.getElementById("homeHours").textContent = totalHours;
 
   const circumference = 2*Math.PI*78;
-  const dash = circumference * (total/100);
+  const dash = circumference * (within/100);
   const ringFg = document.getElementById("homeRingFg");
   ringFg.setAttribute("stroke-dasharray", circumference);
   ringFg.setAttribute("stroke-dashoffset", circumference-dash);
-  document.getElementById("homeRingPct").textContent = total + "%";
+  document.getElementById("homeRingPct").textContent = within + "%";
 
   const bi = document.getElementById("baselineInput");
   if(document.activeElement !== bi) bi.value = data.baselineBooks;
@@ -492,7 +662,7 @@ function renderHome(){
   const shelf = document.getElementById("homeShelf");
   let shelfHtml = "";
   for(let i=0;i<100;i++){
-    shelfHtml += `<div class="shelf-mark ${i<total ? "filled":""}"></div>`;
+    shelfHtml += `<div class="shelf-mark ${i<within ? "filled":""}"></div>`;
   }
   shelf.innerHTML = shelfHtml;
   renderRewards();
@@ -539,6 +709,25 @@ function renderStats(){
     months.push({ label:(d.getMonth()+1)+"월", value:cnt });
   }
   document.getElementById("statsMonth").innerHTML = barChartHtml(months);
+
+  const yearCount = {};
+  const yearBestMonth = {};
+  data.books.filter(b=>b.status==="done" && b.endDate).forEach(b=>{
+    const y = b.endDate.slice(0,4), m = b.endDate.slice(5,7);
+    yearCount[y] = (yearCount[y]||0) + 1;
+    yearBestMonth[y] = yearBestMonth[y] || {};
+    yearBestMonth[y][m] = (yearBestMonth[y][m]||0) + 1;
+  });
+  const years = Object.keys(yearCount).sort();
+  if(years.length === 0){
+    document.getElementById("statsYear").innerHTML = `<div class="empty-hint sans" style="padding:6px 0;">완독한 책의 완료일이 쌓이면 연도별 그래프가 보여요.</div>`;
+  }else{
+    document.getElementById("statsYear").innerHTML = barChartHtml(years.map(y=>{
+      const months = yearBestMonth[y];
+      const bestM = Object.entries(months).sort((a,b)=>b[1]-a[1])[0];
+      return { label:`${y.slice(2)}'  ${parseInt(bestM[0])}월↑`, value: yearCount[y] };
+    }));
+  }
 
   const genreCount = {};
   data.books.forEach(b=>(b.genres||[]).forEach(g=>{ genreCount[g] = (genreCount[g]||0)+1; }));
@@ -615,6 +804,7 @@ function renderLibrary(){
       html += `
         <div class="card" data-id="${b.id}">
           <div class="card-cover" style="background:${statusColor}">
+            <button class="visibility-toggle ${b.isPublic?"is-public":""}" data-toggle-id="${b.id}" title="${b.isPublic?"공개 중 · 눌러서 비공개로":"비공개 · 눌러서 공개로"}" type="button">${b.isPublic ? "🌐" : "🔒"}</button>
             ${coverInner}
           </div>
           <div class="card-body">
@@ -639,6 +829,17 @@ function renderLibrary(){
     grid.innerHTML = html;
     grid.querySelectorAll(".card[data-id]").forEach(el=>{
       el.addEventListener("click", ()=> openBook(el.dataset.id, el));
+    });
+    grid.querySelectorAll(".visibility-toggle").forEach(el=>{
+      el.addEventListener("click", async (e)=>{
+        e.stopPropagation();
+        const bk = data.books.find(x=>x.id===el.dataset.toggleId);
+        if(!bk) return;
+        bk.isPublic = !bk.isPublic;
+        bk.updatedAt = Date.now();
+        await saveData();
+        renderLibrary();
+      });
     });
     document.getElementById("newBookCard").addEventListener("click", openAddModal);
   }else{
@@ -681,7 +882,8 @@ function exportData(){
 
 function generateReport(){  // PDF (opens print dialog -> save as PDF)
   const doneCount = data.books.filter(b=>b.status==="done").length;
-  const total = Math.min(100, (data.baselineBooks||0) + doneCount);
+  const total = (data.baselineBooks||0) + doneCount;
+  const goalNow = getGoal(total);
   const totalMinutes = data.books.flatMap(b=>b.sessions||[]).reduce((a,s)=>a+s.minutes,0);
 
   const bookPages = data.books.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).map(b=>{
@@ -740,9 +942,9 @@ function generateReport(){  // PDF (opens print dialog -> save as PDF)
       @media print{ .r-book{ page-break-before:always; } }
     </style></head><body>
       <h1>📚 나의 서재 리포트</h1>
-      <p class="r-cover-sub">${todayStr()} 기준 · 100권 프로젝트</p>
+      <p class="r-cover-sub">${todayStr()} 기준 · ${goalNow}권 프로젝트</p>
       <div class="r-stats">
-        <div><b>${total}</b>/100권</div>
+        <div><b>${total}</b>/${goalNow}권</div>
         <div><b>${doneCount}</b>완독</div>
         <div><b>${Math.round(totalMinutes/60*10)/10}</b>시간</div>
       </div>
@@ -793,8 +995,9 @@ function exportCsv(){
 }
 function exportMarkdown(){
   const doneCount = data.books.filter(b=>b.status==="done").length;
-  const total = Math.min(100, (data.baselineBooks||0) + doneCount);
-  let md = `# 나의 서재\n\n100권 프로젝트 · ${total}/100권 (${todayStr()} 기준)\n\n`;
+  const total = (data.baselineBooks||0) + doneCount;
+  const goalNow = getGoal(total);
+  let md = `# 나의 서재\n\n${goalNow}권 프로젝트 · ${total}/${goalNow}권 (${todayStr()} 기준)\n\n`;
   data.books.forEach(b=>{
     md += `## ${b.title||"제목 없음"}\n\n`;
     if(b.author) md += `- 작가: ${b.author}\n`;
@@ -848,6 +1051,25 @@ document.getElementById("baselineInput").addEventListener("change", async (e)=>{
   renderHome();
 });
 document.getElementById("enterLibraryBtn").addEventListener("click", showLibrary);
+document.getElementById("openShareBtn").addEventListener("click", openShareModal);
+document.getElementById("closeShareBtn").addEventListener("click", ()=> document.getElementById("shareModal").classList.add("hidden"));
+document.getElementById("regenShareBtn").addEventListener("click", refreshShareLink);
+document.getElementById("ownerNameInput").addEventListener("input", refreshShareLink);
+document.getElementById("copyShareBtn").addEventListener("click", async ()=>{
+  const area = document.getElementById("shareLinkArea");
+  area.select();
+  try{ await navigator.clipboard.writeText(area.value); document.getElementById("shareCopyStatus").textContent = "복사했어요!"; }
+  catch(e){ document.getElementById("shareCopyStatus").textContent = "복사 실패 — 직접 선택해서 복사해 주세요."; }
+});
+document.getElementById("markAllPublicBtn").addEventListener("click", async ()=>{
+  if(!confirm("서재의 모든 책을 공개로 바꿀까요?")) return;
+  data.books.forEach(b=> b.isPublic = true);
+  await saveData(); renderLibrary();
+});
+document.getElementById("markAllPrivateBtn").addEventListener("click", async ()=>{
+  data.books.forEach(b=> b.isPublic = false);
+  await saveData(); renderLibrary();
+});
 document.getElementById("weeklyGoalInput").addEventListener("change", async (e)=>{
   data.weeklyGoal = Math.max(1, parseInt(e.target.value) || 2);
   await saveData();
@@ -950,6 +1172,7 @@ async function confirmAddBook(){
     status: document.getElementById("fStatus").value,
     startDate: document.getElementById("fStatus").value === "in_progress" ? todayStr() : null,
     takeaway: "",
+    isPublic: false,
     plannedEnd: null,
     endDate: null,
     sessions: [],
@@ -1064,6 +1287,12 @@ function renderDetail(){
         <option value="dropped" ${b.status==="dropped"?"selected":""}>중단</option>
       </select>
     </div>
+
+    <label class="visibility-switch">
+      <input type="checkbox" id="visibilityCheckbox" ${b.isPublic?"checked":""} />
+      <span class="vs-track"><span class="vs-thumb"></span></span>
+      <span class="vs-label sans">${b.isPublic ? "🌐 공개 중 — 친구가 공유 링크에서 볼 수 있어요" : "🔒 비공개 — 나만 볼 수 있어요"}</span>
+    </label>
 
     <input class="book-title-input" id="titleInput" value="${escapeHtml(b.title)}" />
     <div class="book-meta-edit">
@@ -1203,6 +1432,10 @@ function renderDetail(){
       await updateBook({ [field]: e.target.value || null });
       renderDetail();
     });
+  });
+  document.getElementById("visibilityCheckbox").addEventListener("change", async (e)=>{
+    await updateBook({ isPublic: e.target.checked });
+    renderDetail();
   });
   document.getElementById("takeawayInput").addEventListener("blur", async (e)=>{
     await updateBook({ takeaway: e.target.value.trim() });
