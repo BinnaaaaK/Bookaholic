@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>나의 서재</title>
 <link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -51,15 +52,25 @@
       <p>책 한 권, 프로젝트 하나</p>
     </div>
     <div class="data-actions">
-      <button class="icon-btn" id="exportBtn" type="button">내보내기</button>
+      <button class="icon-btn" id="openExportBtn" type="button">내보내기</button>
       <button class="icon-btn" id="importBtn" type="button">가져오기</button>
       <input type="file" id="importFile" accept="application/json" style="display:none" />
     </div>
   </div>
 
-  <div class="heatmap-wrap">
-    <h3>독서 활동</h3>
-    <div class="heatmap-grid" id="heatmapGrid"></div>
+  <div class="stats-wrap">
+    <div class="stat-panel">
+      <h3>최근 7일 독서 시간 <span class="stat-unit">(분)</span></h3>
+      <div class="bar-chart" id="statsWeek"></div>
+    </div>
+    <div class="stat-panel">
+      <h3>월별 완독 권수</h3>
+      <div class="bar-chart" id="statsMonth"></div>
+    </div>
+    <div class="stat-panel stat-wide">
+      <h3>장르별 권수</h3>
+      <div id="statsGenre"></div>
+    </div>
   </div>
 
   <div class="toolbar">
@@ -85,6 +96,22 @@
 </div>
 
 <div id="overlay"><div id="overlay-inner"></div></div>
+
+<div id="exportModal" class="modal-overlay hidden">
+  <div class="modal-box">
+    <h3>내보내기</h3>
+    <div class="export-list">
+      <button class="export-item" data-fmt="pdf" type="button"><b>PDF</b><span>홈 요약 → 서재 목록 → 책별 페이지로 정리된 문서</span></button>
+      <button class="export-item" data-fmt="xlsx" type="button"><b>Excel (.xlsx)</b><span>책 목록 · 문구 · 독서 기록이 시트별로 나뉘어요</span></button>
+      <button class="export-item" data-fmt="md" type="button"><b>Markdown (.md)</b><span>노션에 그대로 붙여넣거나 가져오기 할 수 있어요</span></button>
+      <button class="export-item" data-fmt="csv" type="button"><b>CSV (.csv)</b><span>노션 데이터베이스나 구글 시트로 가져오기용 책 목록</span></button>
+      <button class="export-item" data-fmt="json" type="button"><b>백업 (.json)</b><span>기록 전체를 그대로 저장해두는 파일. "가져오기"로 복원할 수 있어요</span></button>
+    </div>
+    <div class="modal-actions" style="justify-content:flex-end;">
+      <button class="secondary" id="closeExportBtn" type="button">닫기</button>
+    </div>
+  </div>
+</div>
 
 <div id="addModal" class="modal-overlay hidden">
   <div class="modal-box">
@@ -134,11 +161,34 @@ let timer = { running:false, startTs:null, elapsed:0 };
 let timerInterval = null;
 
 const COVER_PALETTE = ["#213D31","#1B2E45","#4A2A1F","#332349","#3D2C10","#173B3B","#3B1B2C"];
+const STATUS_COLORS = {
+  not_started: "#4A5560",
+  in_progress: "#2C5A82",
+  done: "#2F6B4D"
+};
 
 function hashColor(str){
   let h = 0;
   for(let i=0;i<str.length;i++) h = str.charCodeAt(i) + ((h<<5)-h);
   return COVER_PALETTE[Math.abs(h) % COVER_PALETTE.length];
+}
+
+function ringSvg(pct, size, stroke, trackColor, fgColor, textColor){
+  const r = (size/2) - (stroke/2) - 1;
+  const c = 2*Math.PI*r;
+  const dash = c * (pct/100);
+  const center = size/2;
+  const fontSize = Math.round(size*0.26);
+  return `
+    <svg width="${size}" height="${size}" class="mini-ring" viewBox="0 0 ${size} ${size}">
+      <circle cx="${center}" cy="${center}" r="${r}" stroke="${trackColor}" stroke-width="${stroke}" fill="none"/>
+      <circle cx="${center}" cy="${center}" r="${r}" stroke="${fgColor}" stroke-width="${stroke}" fill="none"
+        stroke-dasharray="${c}" stroke-dashoffset="${c-dash}" stroke-linecap="round"
+        transform="rotate(-90 ${center} ${center})"/>
+      <text x="${center}" y="${center}" text-anchor="middle" dominant-baseline="central"
+        font-size="${fontSize}" font-weight="700" fill="${textColor}" font-family="Avenir Next, sans-serif">${pct}%</text>
+    </svg>
+  `;
 }
 function todayStr(){
   const d = new Date();
@@ -242,38 +292,56 @@ function showLibrary(){
   renderLibrary();
 }
 
-function renderHeatmap(){
-  const el = document.getElementById("heatmapGrid");
-  const allSessions = data.books.flatMap(b => b.sessions||[]);
+function barChartHtml(items){
+  const max = Math.max(1, ...items.map(i=>i.value));
+  return items.map(i=>`
+    <div class="bar-col">
+      <div class="bar-val">${i.value}</div>
+      <div class="bar-track"><div class="bar" style="height:${Math.round(i.value/max*100)}%"></div></div>
+      <div class="bar-label">${i.label}</div>
+    </div>`).join("");
+}
+
+function renderStats(){
+  const dayNames = ["일","월","화","수","목","금","토"];
   const byDate = {};
-  allSessions.forEach(s=>{ byDate[s.date] = (byDate[s.date]||0) + s.minutes; });
-
-  const days = 91;
-  const today = new Date(); today.setHours(0,0,0,0);
-  const start = new Date(today); start.setDate(start.getDate() - (days-1));
-  // align to Monday
-  const startDay = (start.getDay()+6)%7;
-  start.setDate(start.getDate()-startDay);
-
-  let html = "";
-  const cursor = new Date(start);
-  const totalCells = Math.ceil((today-start)/86400000)+1;
-  for(let i=0;i<totalCells;i++){
-    const key = cursor.getFullYear()+"-"+String(cursor.getMonth()+1).padStart(2,"0")+"-"+String(cursor.getDate()).padStart(2,"0");
-    const minutes = byDate[key] || 0;
-    let level = "";
-    if(minutes>0 && minutes<=15) level="l1";
-    else if(minutes<=30) level="l2";
-    else if(minutes<=60) level="l3";
-    else if(minutes>60) level="l4";
-    html += `<div class="heatmap-cell ${level}" title="${key}${minutes?' · '+minutes+'분':''}"></div>`;
-    cursor.setDate(cursor.getDate()+1);
+  data.books.flatMap(b=>b.sessions||[]).forEach(s=>{ byDate[s.date] = (byDate[s.date]||0) + s.minutes; });
+  const week = [];
+  for(let i=6;i>=0;i--){
+    const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-i);
+    const key = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    week.push({ label: i===0 ? "오늘" : dayNames[d.getDay()], value: byDate[key]||0 });
   }
-  el.innerHTML = html;
+  document.getElementById("statsWeek").innerHTML = barChartHtml(week);
+
+  const months = [];
+  for(let i=5;i>=0;i--){
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth()-i);
+    const key = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+    const cnt = data.books.filter(b=>b.status==="done" && b.endDate && b.endDate.startsWith(key)).length;
+    months.push({ label:(d.getMonth()+1)+"월", value:cnt });
+  }
+  document.getElementById("statsMonth").innerHTML = barChartHtml(months);
+
+  const genreCount = {};
+  data.books.forEach(b=>(b.genres||[]).forEach(g=>{ genreCount[g] = (genreCount[g]||0)+1; }));
+  const genres = Object.entries(genreCount).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  const gEl = document.getElementById("statsGenre");
+  if(genres.length === 0){
+    gEl.innerHTML = `<div class="empty-hint sans" style="padding:6px 0;">책 상세 화면에서 장르 태그를 달면, 어떤 분야를 많이 읽는지 여기에 보여요.</div>`;
+  }else{
+    const gmax = genres[0][1];
+    gEl.innerHTML = genres.map(([name,cnt])=>`
+      <div class="hbar-row">
+        <span class="hbar-label sans">${escapeHtml(name)}</span>
+        <div class="hbar-track"><div class="hbar-fill" style="width:${Math.round(cnt/gmax*100)}%"></div></div>
+        <span class="hbar-num sans">${cnt}</span>
+      </div>`).join("");
+  }
 }
 
 function renderLibrary(){
-  renderHeatmap();
+  renderStats();
 
   const list = getFilteredSortedBooks();
   const count = data.books.length;
@@ -287,18 +355,20 @@ function renderLibrary(){
     let html = "";
     list.forEach(b=>{
       const pct = pctOf(b);
-      const color = b.coverColor || hashColor(b.title || b.id);
       const totalMinutes = (b.sessions||[]).reduce((a,s)=>a+s.minutes,0);
       const timeStr = totalMinutes >= 60 ? `${Math.floor(totalMinutes/60)}시간 ${totalMinutes%60}분` : `${totalMinutes}분`;
       const bottomLine = b.status === "done"
         ? `완료 · 총 ${timeStr}`
         : `${b.startDate ? fmtDate(b.startDate) : "시작 전"}${b.endDate ? " → "+fmtDate(b.endDate) : ""}`;
-      const initial = (b.title||"?").trim().charAt(0).toUpperCase();
+      const statusColor = STATUS_COLORS[b.status] || STATUS_COLORS.not_started;
+      const coverInner = b.coverImage
+        ? `<img class="cover-img" src="${b.coverImage}" alt="" />
+           <span class="ring-badge">${ringSvg(pct, 40, 4, "rgba(255,255,255,0.35)", "#ffffff", "#ffffff")}</span>`
+        : ringSvg(pct, 64, 6, "rgba(255,255,255,0.25)", "#ffffff", "#ffffff");
       html += `
         <div class="card" data-id="${b.id}">
-          <div class="card-cover" style="background:${color}">
-            ${b.coverImage ? `<img class="cover-img" src="${b.coverImage}" alt="" />` : `<span class="cover-initial">${escapeHtml(initial)}</span>`}
-            <span class="pct-badge">${pct}%</span>
+          <div class="card-cover" style="background:${statusColor}">
+            ${coverInner}
           </div>
           <div class="card-body">
             <div class="card-title">${escapeHtml(b.title || "제목 없음")}</div>
@@ -360,6 +430,147 @@ function exportData(){
   URL.revokeObjectURL(url);
 }
 
+function generateReport(){  // PDF (opens print dialog -> save as PDF)
+  const doneCount = data.books.filter(b=>b.status==="done").length;
+  const total = Math.min(100, (data.baselineBooks||0) + doneCount);
+  const totalMinutes = data.books.flatMap(b=>b.sessions||[]).reduce((a,s)=>a+s.minutes,0);
+
+  const bookPages = data.books.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).map(b=>{
+    const pct = pctOf(b);
+    const tMin = (b.sessions||[]).reduce((a,s)=>a+s.minutes,0);
+    const tStr = tMin>=60 ? `${Math.floor(tMin/60)}시간 ${tMin%60}분` : `${tMin}분`;
+    const quotes = (b.quotes||[]).length
+      ? b.quotes.map(q=>`<div class="r-quote">“${escapeHtml(q.text)}”${q.page?` <span class="r-qpage">p.${q.page}</span>`:""}</div>`).join("")
+      : `<p class="r-empty">기록된 문구가 없어요.</p>`;
+    return `
+      <section class="r-book">
+        <h2>${escapeHtml(b.title||"제목 없음")}</h2>
+        <div class="r-meta">
+          ${b.author ? `<div><b>작가</b> ${escapeHtml(b.author)}</div>` : ""}
+          ${b.publisher ? `<div><b>출판사</b> ${escapeHtml(b.publisher)}</div>` : ""}
+          ${b.translator ? `<div><b>옮긴이</b> ${escapeHtml(b.translator)}</div>` : ""}
+          <div><b>상태</b> ${statusLabel(b.status)} · ${pct}%</div>
+          ${b.startDate ? `<div><b>시작일</b> ${fmtDate(b.startDate)}</div>` : ""}
+          ${b.endDate ? `<div><b>완료일</b> ${fmtDate(b.endDate)}</div>` : ""}
+          <div><b>누적 독서 시간</b> ${tStr}</div>
+          ${b.rating ? `<div><b>별점</b> ${starsHtml(b.rating)}</div>` : ""}
+          ${(b.genres&&b.genres.length) ? `<div><b>장르</b> ${b.genres.map(escapeHtml).join(", ")}</div>` : ""}
+        </div>
+        <h3>좋았던 문구</h3>
+        ${quotes}
+        <h3>독후감</h3>
+        <p class="r-review">${b.review ? escapeHtml(b.review).replace(/\n/g,"<br>") : `<span class="r-empty">작성된 독후감이 없어요.</span>`}</p>
+      </section>
+    `;
+  }).join("");
+
+  const libraryRows = data.books.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).map(b=>
+    `<tr><td>${escapeHtml(b.title||"제목 없음")}</td><td>${escapeHtml(b.author||"—")}</td><td>${statusLabel(b.status)}</td><td>${pctOf(b)}%</td></tr>`
+  ).join("");
+
+  const html = `
+    <!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>나의 서재 리포트</title>
+    <style>
+      body{font-family:"Iowan Old Style",Georgia,serif; color:#23303C; max-width:720px; margin:40px auto; padding:0 20px; line-height:1.6;}
+      h1{font-size:30px; margin-bottom:4px;}
+      .r-cover-sub{color:#6b7280; font-size:14px; margin-bottom:40px;}
+      .r-stats{display:flex; gap:30px; margin-bottom:40px; font-size:14px;}
+      .r-stats b{display:block; font-size:22px;}
+      table{width:100%; border-collapse:collapse; margin-bottom:50px; font-size:13.5px;}
+      th,td{border-bottom:1px solid #ddd; padding:8px 6px; text-align:left;}
+      .r-book{ page-break-before:always; padding-top:20px; }
+      .r-book h2{font-size:22px; border-bottom:2px solid #23303C; padding-bottom:8px;}
+      .r-meta{font-size:13.5px; color:#444; margin:14px 0 20px; display:flex; flex-direction:column; gap:3px;}
+      .r-meta b{display:inline-block; width:90px; color:#888; font-weight:600;}
+      h3{font-size:13px; color:#888; text-transform:uppercase; letter-spacing:.5px; margin:22px 0 10px;}
+      .r-quote{background:#FAEBDD; border-left:3px solid #D9730D; padding:10px 14px; margin-bottom:8px; border-radius:4px; font-size:14px;}
+      .r-qpage{color:#888; font-size:11px;}
+      .r-review{font-size:14.5px;}
+      .r-empty{color:#999; font-style:normal; font-size:13px;}
+      @media print{ .r-book{ page-break-before:always; } }
+    </style></head><body>
+      <h1>📚 나의 서재 리포트</h1>
+      <p class="r-cover-sub">${todayStr()} 기준 · 100권 프로젝트</p>
+      <div class="r-stats">
+        <div><b>${total}</b>/100권</div>
+        <div><b>${doneCount}</b>완독</div>
+        <div><b>${Math.round(totalMinutes/60*10)/10}</b>시간</div>
+      </div>
+      <h3>서재 목록</h3>
+      <table><tr><th>제목</th><th>작가</th><th>상태</th><th>진행률</th></tr>${libraryRows}</table>
+      ${bookPages}
+      <script>window.onload=()=>setTimeout(()=>window.print(),400)<\/script>
+    </body></html>
+  `;
+  const blob = new Blob([html], { type:"text/html" });
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank");
+}
+
+
+function downloadBlob(content, filename, type){
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+function bookMinutes(b){ return (b.sessions||[]).reduce((a,s)=>a+s.minutes,0); }
+function booksRows(){
+  return data.books.map(b=>({
+    "제목": b.title||"", "작가": b.author||"", "출판사": b.publisher||"", "옮긴이": b.translator||"",
+    "상태": statusLabel(b.status), "진행률(%)": pctOf(b), "현재 페이지": b.currentPage||0, "총 페이지": b.totalPages||0,
+    "시작일": b.startDate||"", "완료일": b.endDate||"", "누적 독서시간(분)": bookMinutes(b),
+    "별점": b.rating||"", "장르": (b.genres||[]).join(", "), "독후감": b.review||""
+  }));
+}
+function exportXlsx(){
+  if(typeof XLSX === "undefined"){ alert("Excel 라이브러리를 불러오지 못했어요. 인터넷 연결을 확인하거나 CSV로 내보내 주세요."); return; }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(booksRows()), "책 목록");
+  const quotes = data.books.flatMap(b=>(b.quotes||[]).map(q=>({ "책": b.title, "문구": q.text, "페이지": q.page||"" })));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(quotes.length?quotes:[{ "책":"", "문구":"", "페이지":"" }]), "문구");
+  const sessions = data.books.flatMap(b=>(b.sessions||[]).map(s=>({ "책": b.title, "날짜": s.date, "독서시간(분)": s.minutes })));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sessions.length?sessions:[{ "책":"", "날짜":"", "독서시간(분)":"" }]), "독서 기록");
+  XLSX.writeFile(wb, `나의서재-${todayStr()}.xlsx`);
+}
+function exportCsv(){
+  const rows = booksRows();
+  const keys = Object.keys(rows[0] || {"제목":""});
+  const esc = v => `"${String(v).replace(/"/g,'""')}"`;
+  const csv = [keys.map(esc).join(",")].concat(rows.map(r=>keys.map(k=>esc(r[k])).join(","))).join("\r\n");
+  downloadBlob("\uFEFF"+csv, `나의서재-${todayStr()}.csv`, "text/csv;charset=utf-8");
+}
+function exportMarkdown(){
+  const doneCount = data.books.filter(b=>b.status==="done").length;
+  const total = Math.min(100, (data.baselineBooks||0) + doneCount);
+  let md = `# 나의 서재\n\n100권 프로젝트 · ${total}/100권 (${todayStr()} 기준)\n\n`;
+  data.books.forEach(b=>{
+    md += `## ${b.title||"제목 없음"}\n\n`;
+    if(b.author) md += `- 작가: ${b.author}\n`;
+    if(b.publisher) md += `- 출판사: ${b.publisher}\n`;
+    if(b.translator) md += `- 옮긴이: ${b.translator}\n`;
+    md += `- 상태: ${statusLabel(b.status)} (${pctOf(b)}%)\n`;
+    if(b.startDate) md += `- 시작일: ${b.startDate}\n`;
+    if(b.endDate) md += `- 완료일: ${b.endDate}\n`;
+    md += `- 누적 독서시간: ${bookMinutes(b)}분\n`;
+    if(b.rating) md += `- 별점: ${starsHtml(b.rating)}\n`;
+    if((b.genres||[]).length) md += `- 장르: ${b.genres.join(", ")}\n`;
+    md += `\n### 좋았던 문구\n\n`;
+    md += (b.quotes||[]).length ? b.quotes.map(q=>`> ${q.text}${q.page?` (p.${q.page})`:""}\n`).join("\n") : "_기록 없음_\n";
+    md += `\n### 독후감\n\n${b.review||"_작성된 독후감 없음_"}\n\n---\n\n`;
+  });
+  downloadBlob(md, `나의서재-${todayStr()}.md`, "text/markdown;charset=utf-8");
+}
+function handleExport(fmt){
+  if(fmt==="pdf") generateReport();
+  else if(fmt==="xlsx") exportXlsx();
+  else if(fmt==="md") exportMarkdown();
+  else if(fmt==="csv") exportCsv();
+  else if(fmt==="json") exportData();
+  document.getElementById("exportModal").classList.add("hidden");
+}
+
 function importData(file){
   const reader = new FileReader();
   reader.onload = async (e)=>{
@@ -415,7 +626,9 @@ document.getElementById("viewBoardBtn").addEventListener("click", ()=>{
   document.getElementById("viewGridBtn").classList.remove("active");
   renderLibrary();
 });
-document.getElementById("exportBtn").addEventListener("click", exportData);
+document.getElementById("openExportBtn").addEventListener("click", ()=> document.getElementById("exportModal").classList.remove("hidden"));
+document.getElementById("closeExportBtn").addEventListener("click", ()=> document.getElementById("exportModal").classList.add("hidden"));
+document.querySelectorAll(".export-item").forEach(btn=> btn.addEventListener("click", ()=> handleExport(btn.dataset.fmt)));
 document.getElementById("importBtn").addEventListener("click", ()=> document.getElementById("importFile").click());
 document.getElementById("importFile").addEventListener("change", (e)=>{
   if(e.target.files[0]) importData(e.target.files[0]);
@@ -586,12 +799,19 @@ function renderDetail(){
 
     <input class="book-title-input" id="titleInput" value="${escapeHtml(b.title)}" />
     <div class="book-meta-edit">
-      <input id="authorInput" value="${escapeHtml(b.author||"")}" placeholder="저자" />
-      <input id="publisherInput" value="${escapeHtml(b.publisher||"")}" placeholder="출판사" />
-      <input id="translatorInput" value="${escapeHtml(b.translator||"")}" placeholder="옮긴이 (있다면)" />
+      <div class="meta-row"><span class="meta-label sans">작가</span><input id="authorInput" value="${escapeHtml(b.author||"")}" placeholder="입력해 주세요" /></div>
+      <div class="meta-row"><span class="meta-label sans">출판사</span><input id="publisherInput" value="${escapeHtml(b.publisher||"")}" placeholder="입력해 주세요" /></div>
+      <div class="meta-row"><span class="meta-label sans">옮긴이</span><input id="translatorInput" value="${escapeHtml(b.translator||"")}" placeholder="있다면 입력" /></div>
     </div>
-    <div class="meta-dates sans">
-      ${b.startDate ? "시작 "+fmtDate(b.startDate) : "아직 시작 전"}${b.endDate ? " · 완료 "+fmtDate(b.endDate) : ""}
+    <div class="meta-dates">
+      <div class="meta-date-chip ${b.startDate?"filled":""}">
+        <span class="mdc-label sans">시작일</span>
+        <span class="mdc-value">${b.startDate ? fmtDate(b.startDate) : "아직 시작 전"}</span>
+      </div>
+      <div class="meta-date-chip ${b.endDate?"filled":""}">
+        <span class="mdc-label sans">완료일</span>
+        <span class="mdc-value">${b.endDate ? fmtDate(b.endDate) : "—"}</span>
+      </div>
     </div>
 
     <div class="detail-section">
