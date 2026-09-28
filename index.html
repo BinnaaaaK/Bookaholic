@@ -41,6 +41,29 @@
     <div class="home-shelf" id="homeShelf"></div>
 
     <button class="home-cta" id="enterLibraryBtn" type="button">나의 서재 들어가기 →</button>
+    <button class="home-cta ghost-cta" id="openRetroBtn" type="button">📖 독서 회고 보기</button>
+
+    <div class="reward-section">
+      <div class="reward-card">
+        <div class="rc-head"><h3>이번 주 목표</h3><span class="rc-sub" id="weekGoalText"></span></div>
+        <div class="op-bar-track"><div class="op-bar-fill" id="weekGoalFill" style="width:0%"></div></div>
+        <div class="rc-foot">주간 목표 <input type="number" id="weeklyGoalInput" min="1" value="2" /> 권 (월~일 기준, 완료일이 이번 주인 책)</div>
+      </div>
+      <div class="reward-card">
+        <div class="rc-head"><h3>연속 독서 · 출석 스티커</h3><span class="rc-sub" id="streakText"></span></div>
+        <div class="sticker-row" id="stickerRow"></div>
+      </div>
+      <div class="reward-card">
+        <div class="rc-head"><h3>나의 책갈피</h3><span class="rc-sub" id="bookmarkText"></span></div>
+        <div class="bookmark-row" id="bookmarkRow"></div>
+        <p class="rc-note" id="bookmarkNote"></p>
+      </div>
+      <div class="reward-card">
+        <div class="rc-head"><h3>뱃지</h3><span class="rc-sub" id="badgeText"></span></div>
+        <div class="badge-row" id="badgeRow"></div>
+        <p class="rc-note">완독 예상일(목표 완독일)보다 일찍 끝내면 ⚡ 앞당김 뱃지를 받아요.</p>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -52,9 +75,31 @@
       <p>책 한 권, 프로젝트 하나</p>
     </div>
     <div class="data-actions">
+      <button class="icon-btn" id="openRetroBtn2" type="button">회고</button>
       <button class="icon-btn" id="openExportBtn" type="button">내보내기</button>
       <button class="icon-btn" id="importBtn" type="button">가져오기</button>
       <input type="file" id="importFile" accept="application/json" style="display:none" />
+    </div>
+  </div>
+
+  <div class="contrib-wrap">
+    <div class="contrib-head">
+      <h3 id="contribTitle">올해 독서 기록</h3>
+      <span class="contrib-desc sans">타이머로 기록한 날이 표시돼요. 진할수록 그날 더 오래 읽은 거예요.</span>
+    </div>
+    <div class="contrib-scroll">
+      <div class="contrib-inner">
+        <div class="contrib-months" id="contribMonths"></div>
+        <div class="contrib-body">
+          <div class="contrib-days sans"><span></span><span>월</span><span></span><span>수</span><span></span><span>금</span><span></span></div>
+          <div class="contrib-grid" id="contribGrid"></div>
+        </div>
+      </div>
+    </div>
+    <div class="heatmap-legend sans" style="justify-content:flex-end;">
+      <span>적게</span>
+      <span class="heatmap-cell"></span><span class="heatmap-cell l1"></span><span class="heatmap-cell l2"></span><span class="heatmap-cell l3"></span><span class="heatmap-cell l4"></span>
+      <span>많이</span>
     </div>
   </div>
 
@@ -77,9 +122,11 @@
     <input type="text" id="searchInput" placeholder="제목·저자 검색" />
     <div class="chip-group" id="statusChips">
       <button class="chip active" data-status="all" type="button">전체</button>
+      <button class="chip" data-status="wishlist" type="button">읽고 싶음</button>
       <button class="chip" data-status="not_started" type="button">시작 전</button>
       <button class="chip" data-status="in_progress" type="button">읽는 중</button>
       <button class="chip" data-status="done" type="button">완료</button>
+      <button class="chip" data-status="dropped" type="button">중단</button>
     </div>
     <select id="sortSelect">
       <option value="updated">최근 업데이트순</option>
@@ -96,6 +143,19 @@
 </div>
 
 <div id="overlay"><div id="overlay-inner"></div></div>
+
+<div id="retroModal" class="modal-overlay hidden">
+  <div class="modal-box retro-box">
+    <div class="retro-head">
+      <h3 id="retroTitle">독서 회고</h3>
+      <select id="retroYear" class="modal-select" style="width:auto;"></select>
+    </div>
+    <div id="retroBody"></div>
+    <div class="modal-actions" style="justify-content:flex-end;">
+      <button class="secondary" id="closeRetroBtn" type="button">닫기</button>
+    </div>
+  </div>
+</div>
 
 <div id="exportModal" class="modal-overlay hidden">
   <div class="modal-box">
@@ -135,6 +195,12 @@
     <input id="fTranslator" />
     <label>총 페이지 수</label>
     <input id="fPages" type="number" min="0" />
+    <label>상태</label>
+    <select id="fStatus" class="modal-select">
+      <option value="wishlist">읽고 싶음</option>
+      <option value="not_started" selected>시작 전</option>
+      <option value="in_progress">읽는 중</option>
+    </select>
 
     <div class="modal-actions">
       <button class="secondary" id="cancelAddBtn" type="button">취소</button>
@@ -162,9 +228,11 @@ let timerInterval = null;
 
 const COVER_PALETTE = ["#213D31","#1B2E45","#4A2A1F","#332349","#3D2C10","#173B3B","#3B1B2C"];
 const STATUS_COLORS = {
+  wishlist: "#5C4F7A",
   not_started: "#4A5560",
   in_progress: "#2C5A82",
-  done: "#2F6B4D"
+  done: "#2F6B4D",
+  dropped: "#6B4B47"
 };
 
 function hashColor(str){
@@ -205,7 +273,7 @@ function escapeHtml(str){
   return div.innerHTML;
 }
 function statusLabel(s){
-  return s === "done" ? "완료" : s === "in_progress" ? "읽는 중" : "시작 전";
+  return ({ wishlist:"읽고 싶음", not_started:"시작 전", in_progress:"읽는 중", done:"완료", dropped:"중단" })[s] || "시작 전";
 }
 function pctOf(book){
   if(!book.totalPages || book.totalPages<=0) return 0;
@@ -246,6 +314,154 @@ function getFilteredSortedBooks(){
   return list;
 }
 
+function dkey(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+function parseD(s){ return new Date(s+"T00:00:00"); }
+function daysDiff(a, b){ return Math.round((parseD(b) - parseD(a)) / 86400000); }
+
+function estimateFinish(b){
+  if(!b.startDate || !b.totalPages || !(b.currentPage > 0) || b.currentPage >= b.totalPages) return null;
+  const elapsed = Math.max(1, daysDiff(b.startDate, todayStr()) + 1);
+  const pace = b.currentPage / elapsed;
+  const daysLeft = Math.ceil((b.totalPages - b.currentPage) / pace);
+  const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() + daysLeft);
+  return { date: dkey(d), pace: Math.round(pace*10)/10 };
+}
+function ensurePlanned(b){
+  if(b.plannedEnd || b.status !== "in_progress" || !b.startDate) return;
+  if(daysDiff(b.startDate, todayStr()) < 1) return;
+  const est = estimateFinish(b);
+  if(est) b.plannedEnd = est.date;
+}
+function earlyBadges(){
+  return data.books
+    .filter(b => b.status === "done" && b.endDate && b.plannedEnd && b.endDate < b.plannedEnd)
+    .map(b => ({ bookId:b.id, title:b.title, days: daysDiff(b.endDate, b.plannedEnd) }));
+}
+function readingDaySet(){
+  const s = new Set();
+  data.books.forEach(b => (b.sessions||[]).forEach(x => { if(x.minutes > 0) s.add(x.date); }));
+  return s;
+}
+function calcStreak(){
+  const days = readingDaySet();
+  const d = new Date(); d.setHours(0,0,0,0);
+  const readToday = days.has(dkey(d));
+  if(!readToday) d.setDate(d.getDate()-1);
+  let n = 0;
+  while(days.has(dkey(d))){ n++; d.setDate(d.getDate()-1); }
+  return { n, readToday };
+}
+
+function renderRewards(){
+  const days = readingDaySet();
+  const today = new Date(); today.setHours(0,0,0,0);
+  const todayKey = dkey(today);
+
+  // weekly goal (Mon-Sun)
+  const goal = Math.max(1, data.weeklyGoal || 2);
+  const wkStart = new Date(today); wkStart.setDate(wkStart.getDate() - ((wkStart.getDay()+6)%7));
+  const wkEnd = new Date(wkStart); wkEnd.setDate(wkEnd.getDate()+6);
+  const doneThisWeek = data.books.filter(b => b.status === "done" && b.endDate && b.endDate >= dkey(wkStart) && b.endDate <= dkey(wkEnd)).length;
+  document.getElementById("weekGoalText").textContent = doneThisWeek >= goal ? `${doneThisWeek} / ${goal}권 · 달성! 🎉` : `${doneThisWeek} / ${goal}권`;
+  document.getElementById("weekGoalFill").style.width = Math.min(100, doneThisWeek/goal*100) + "%";
+  const gi = document.getElementById("weeklyGoalInput");
+  if(document.activeElement !== gi) gi.value = goal;
+
+  // streak + stickers (last 14 days)
+  const st = calcStreak();
+  document.getElementById("streakText").textContent = st.n > 0
+    ? `${st.n}일 연속${st.readToday ? "" : " · 오늘 읽으면 +1"}`
+    : "오늘 첫 독서를 시작해 보세요";
+  let sh = "";
+  for(let i=13;i>=0;i--){
+    const d = new Date(today); d.setDate(d.getDate()-i);
+    const on = days.has(dkey(d));
+    sh += `<div class="sticker-cell"><div class="sticker ${on ? "on c"+(d.getDate()%5) : ""} ${i===0 ? "today" : ""}" title="${dkey(d)}">${on ? "★" : ""}</div><span>${i===0 ? "오늘" : d.getDate()}</span></div>`;
+  }
+  document.getElementById("stickerRow").innerHTML = sh;
+
+  // bookmarks: 1 per 3 reading days; fade (never deleted) after skipping days
+  const readDays = days.size;
+  const earned = Math.floor(readDays / 3);
+  let missed = 0;
+  if(readDays > 0){
+    const last = [...days].sort().pop();
+    missed = Math.max(0, daysDiff(last, todayKey) - 1);  // 하루는 쉬어도 OK
+  }
+  const colors = ["#C9974B","#5E9179","#6FB2F2","#E08575","#A58BD6","#D9B86A","#7FB7A4"];
+  const showN = Math.min(earned, 30);
+  let bm = earned > showN ? `<span class="bm-more">+${earned-showN}</span>` : "";
+  let dormant = 0;
+  for(let k = earned-showN; k < earned; k++){
+    const j = earned-1-k;
+    const p = Math.min(1, Math.max(0, (missed - 2*j) / 3));
+    if(p >= 1) dormant++;
+    const asleep = p >= 1;
+    bm += `<svg class="bm" width="18" height="34" viewBox="0 0 18 34" style="opacity:${asleep ? 0.6 : 1 - 0.75*p}"><path d="M2 1h14v32l-7-6-7 6z" fill="${asleep ? "none" : colors[k%colors.length]}" stroke="${asleep ? "var(--line-strong)" : "none"}" stroke-width="1.5" stroke-dasharray="${asleep ? "3 2" : "0"}"/></svg>`;
+  }
+  document.getElementById("bookmarkRow").innerHTML = bm || `<span class="rc-sub">아직 없어요</span>`;
+  document.getElementById("bookmarkText").textContent = `${earned}개`;
+  document.getElementById("bookmarkNote").textContent =
+    earned === 0 ? `독서한 날(타이머 기록) 3일마다 책갈피 1개를 받아요. 다음 책갈피까지 ${3 - (readDays % 3)}일.`
+    : missed === 0 ? "책갈피가 모두 선명해요. 이대로 이어가 봐요!"
+    : `${missed}일째 쉬는 중이라 책갈피가 흐려지고 있어요${dormant ? ` (잠든 책갈피 ${dormant}개)` : ""}. 사라지진 않아요 — 오늘 읽으면 모두 선명하게 돌아와요.`;
+
+  // badges
+  const total = (data.baselineBooks||0) + data.books.filter(b=>b.status==="done").length;
+  const milestones = [1,5,10,25,50,100];
+  const early = earlyBadges();
+  const sumDays = early.reduce((a,e)=>a+e.days, 0);
+  let bh = milestones.map(m => `<div class="badge ${total>=m ? "on" : "locked"}"><div class="badge-icon">${total>=m ? "🏅" : "🔒"}</div><b>${m}권</b><span>${m===1 ? "첫 완독" : "달성"}</span></div>`).join("");
+  bh += early.map(e => `<div class="badge on early"><div class="badge-icon">⚡</div><b>${e.days}일 앞당김</b><span>${escapeHtml(e.title||"")}</span></div>`).join("");
+  document.getElementById("badgeRow").innerHTML = bh;
+  document.getElementById("badgeText").textContent = early.length ? `목표에 총 ${sumDays}일 가까워졌어요` : `${milestones.filter(m=>total>=m).length}개 획득`;
+}
+
+function openRetro(){
+  const years = new Set([String(new Date().getFullYear())]);
+  data.books.forEach(b => { if(b.status === "done" && b.endDate) years.add(b.endDate.slice(0,4)); });
+  const sel = document.getElementById("retroYear");
+  sel.innerHTML = [...years].sort().reverse().map(y => `<option value="${y}">${y}년</option>`).join("");
+  renderRetro(sel.value);
+  document.getElementById("retroModal").classList.remove("hidden");
+}
+function renderRetro(year){
+  document.getElementById("retroTitle").textContent = `${year} 독서 회고`;
+  const body = document.getElementById("retroBody");
+  const done = data.books.filter(b => b.status === "done" && b.endDate && b.endDate.startsWith(year));
+  if(done.length === 0){
+    body.innerHTML = `<p class="empty-hint sans">${year}년에 완독한 책이 아직 없어요.</p>`;
+    return;
+  }
+  const minutes = data.books.flatMap(b=>b.sessions||[]).filter(s=>s.date.startsWith(year)).reduce((a,s)=>a+s.minutes, 0);
+  const pages = done.reduce((a,b)=>a+(b.totalPages||0), 0);
+  const maxRating = Math.max(0, ...done.map(b=>b.rating||0));
+  const best = maxRating > 0 ? done.filter(b=>(b.rating||0) === maxRating).slice(0,3) : [];
+  const gc = {}; done.forEach(b => (b.genres||[]).forEach(g => { gc[g] = (gc[g]||0)+1; }));
+  const topG = Object.entries(gc).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  const quotes = done.flatMap(b => (b.quotes||[]).map(q => ({q,b}))).sort((x,y)=>(y.b.rating||0)-(x.b.rating||0)).slice(0,5);
+  const takeaways = done.filter(b => b.takeaway);
+  body.innerHTML = `
+    <div class="retro-grid">
+      <div class="retro-stat"><b>${done.length}</b><span>완독</span></div>
+      <div class="retro-stat"><b>${Math.round(minutes/60*10)/10}</b><span>독서 시간</span></div>
+      <div class="retro-stat"><b>${pages.toLocaleString()}</b><span>읽은 쪽수</span></div>
+    </div>
+    <div class="retro-sec"><h4>최고 평점</h4>${best.length
+      ? best.map(b=>`<div class="retro-line"><span class="rl-title">${escapeHtml(b.title)}</span><span class="stars-mini">${starsHtml(b.rating)}</span></div>`).join("")
+      : `<p class="rc-note">별점을 남기면 여기에 보여요.</p>`}</div>
+    <div class="retro-sec"><h4>가장 많이 읽은 장르</h4>${topG.length
+      ? topG.map(([g,c])=>`<span class="tag-chip">${escapeHtml(g)} · ${c}권</span>`).join(" ")
+      : `<p class="rc-note">장르 태그를 달면 여기에 보여요.</p>`}</div>
+    <div class="retro-sec"><h4>인상 깊은 문구</h4>${quotes.length
+      ? quotes.map(({q,b})=>`<div class="quote-item">“${escapeHtml(q.text)}”<div class="qpage-tag">${escapeHtml(b.title)}${q.page ? " · p."+q.page : ""}</div></div>`).join("")
+      : `<p class="rc-note">문구를 기록하면 여기에 모여요.</p>`}</div>
+    <div class="retro-sec"><h4>이 책들에서 얻은 것</h4>${takeaways.length
+      ? takeaways.map(b=>`<div class="retro-line"><span class="rl-title">${escapeHtml(b.title)}</span><span>${escapeHtml(b.takeaway)}</span></div>`).join("")
+      : `<p class="rc-note">책 상세 화면에서 "이 책에서 얻은 것"을 적으면 여기에 모여요.</p>`}</div>
+  `;
+}
+
 function renderHome(){
   data.baselineBooks = data.baselineBooks || 0;
   const doneCount = data.books.filter(b=>b.status==="done").length;
@@ -279,6 +495,7 @@ function renderHome(){
     shelfHtml += `<div class="shelf-mark ${i<total ? "filled":""}"></div>`;
   }
   shelf.innerHTML = shelfHtml;
+  renderRewards();
 }
 
 function showHome(){
@@ -340,8 +557,38 @@ function renderStats(){
   }
 }
 
+function renderContrib(){
+  const year = new Date().getFullYear();
+  const byDate = {};
+  data.books.flatMap(b=>b.sessions||[]).forEach(s=>{ byDate[s.date] = (byDate[s.date]||0) + s.minutes; });
+  const keyOf = d => d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+  const jan1 = new Date(year,0,1);
+  const start = new Date(jan1); start.setDate(start.getDate() - jan1.getDay());
+  const dec31 = new Date(year,11,31);
+
+  let cells = "", i = 0, activeDays = 0, totalMin = 0;
+  const monthAt = {};
+  for(const d = new Date(start); d <= dec31; d.setDate(d.getDate()+1), i++){
+    if(d < jan1){ cells += `<div class="heatmap-cell empty"></div>`; continue; }
+    if(d.getDate() === 1) monthAt[Math.floor(i/7)] = (d.getMonth()+1)+"월";
+    const min = byDate[keyOf(d)] || 0;
+    let level = "";
+    if(min > 0){ activeDays++; totalMin += min; level = min<=15 ? "l1" : min<=30 ? "l2" : min<=60 ? "l3" : "l4"; }
+    cells += `<div class="heatmap-cell ${level}" title="${keyOf(d)}${min?" · "+min+"분":""}"></div>`;
+  }
+  const cols = Math.ceil(i/7);
+  let months = "";
+  for(let c=0;c<cols;c++) months += `<span>${monthAt[c]||""}</span>`;
+
+  document.getElementById("contribGrid").innerHTML = cells;
+  document.getElementById("contribMonths").innerHTML = months;
+  document.getElementById("contribTitle").textContent =
+    `${year}년 · ${activeDays}일 독서 (총 ${Math.round(totalMin/60*10)/10}시간)`;
+}
+
 function renderLibrary(){
   renderStats();
+  renderContrib();
 
   const list = getFilteredSortedBooks();
   const count = data.books.length;
@@ -397,9 +644,11 @@ function renderLibrary(){
   }else{
     grid.classList.add("hidden"); board.classList.remove("hidden");
     const cols = [
+      {key:"wishlist", label:"읽고 싶음"},
       {key:"not_started", label:"시작 전"},
       {key:"in_progress", label:"읽는 중"},
-      {key:"done", label:"완료"}
+      {key:"done", label:"완료"},
+      {key:"dropped", label:"중단"}
     ];
     let html = "";
     cols.forEach(col=>{
@@ -456,6 +705,7 @@ function generateReport(){  // PDF (opens print dialog -> save as PDF)
           ${b.rating ? `<div><b>별점</b> ${starsHtml(b.rating)}</div>` : ""}
           ${(b.genres&&b.genres.length) ? `<div><b>장르</b> ${b.genres.map(escapeHtml).join(", ")}</div>` : ""}
         </div>
+        ${b.takeaway ? `<h3>이 책에서 얻은 것</h3><p class="r-review">${escapeHtml(b.takeaway)}</p>` : ""}
         <h3>좋았던 문구</h3>
         ${quotes}
         <h3>독후감</h3>
@@ -521,7 +771,7 @@ function booksRows(){
     "제목": b.title||"", "작가": b.author||"", "출판사": b.publisher||"", "옮긴이": b.translator||"",
     "상태": statusLabel(b.status), "진행률(%)": pctOf(b), "현재 페이지": b.currentPage||0, "총 페이지": b.totalPages||0,
     "시작일": b.startDate||"", "완료일": b.endDate||"", "누적 독서시간(분)": bookMinutes(b),
-    "별점": b.rating||"", "장르": (b.genres||[]).join(", "), "독후감": b.review||""
+    "별점": b.rating||"", "장르": (b.genres||[]).join(", "), "이 책에서 얻은 것": b.takeaway||"", "독후감": b.review||""
   }));
 }
 function exportXlsx(){
@@ -556,6 +806,7 @@ function exportMarkdown(){
     md += `- 누적 독서시간: ${bookMinutes(b)}분\n`;
     if(b.rating) md += `- 별점: ${starsHtml(b.rating)}\n`;
     if((b.genres||[]).length) md += `- 장르: ${b.genres.join(", ")}\n`;
+    if(b.takeaway) md += `- 이 책에서 얻은 것: ${b.takeaway}\n`;
     md += `\n### 좋았던 문구\n\n`;
     md += (b.quotes||[]).length ? b.quotes.map(q=>`> ${q.text}${q.page?` (p.${q.page})`:""}\n`).join("\n") : "_기록 없음_\n";
     md += `\n### 독후감\n\n${b.review||"_작성된 독후감 없음_"}\n\n---\n\n`;
@@ -597,6 +848,15 @@ document.getElementById("baselineInput").addEventListener("change", async (e)=>{
   renderHome();
 });
 document.getElementById("enterLibraryBtn").addEventListener("click", showLibrary);
+document.getElementById("weeklyGoalInput").addEventListener("change", async (e)=>{
+  data.weeklyGoal = Math.max(1, parseInt(e.target.value) || 2);
+  await saveData();
+  renderRewards();
+});
+document.getElementById("openRetroBtn").addEventListener("click", openRetro);
+document.getElementById("openRetroBtn2").addEventListener("click", openRetro);
+document.getElementById("closeRetroBtn").addEventListener("click", ()=> document.getElementById("retroModal").classList.add("hidden"));
+document.getElementById("retroYear").addEventListener("change", (e)=> renderRetro(e.target.value));
 document.getElementById("backHomeBtn").addEventListener("click", showHome);
 document.getElementById("searchInput").addEventListener("input", (e)=>{
   searchQuery = e.target.value.trim();
@@ -644,6 +904,7 @@ function openAddModal(){
   document.getElementById("fPages").value = "";
   document.getElementById("fetchStatus").textContent = "";
   lastFetchedCover = null;
+  document.getElementById("fStatus").value = "not_started";
   document.getElementById("addModal").classList.remove("hidden");
 }
 function closeAddModal(){
@@ -686,8 +947,10 @@ async function confirmAddBook(){
     translator: document.getElementById("fTranslator").value.trim(),
     totalPages: Math.max(0, parseInt(document.getElementById("fPages").value)||0),
     currentPage: 0,
-    status: "not_started",
-    startDate: null,
+    status: document.getElementById("fStatus").value,
+    startDate: document.getElementById("fStatus").value === "in_progress" ? todayStr() : null,
+    takeaway: "",
+    plannedEnd: null,
     endDate: null,
     sessions: [],
     quotes: [],
@@ -763,6 +1026,7 @@ async function updateBook(patch){
   const b = getBook();
   if(!b) return;
   Object.assign(b, patch, { updatedAt: Date.now() });
+  if(!("plannedEnd" in patch)) ensurePlanned(b);
   await saveData();
 }
 
@@ -786,14 +1050,18 @@ function renderDetail(){
       </div>
     `).join("");
 
+  const est = b.status === "in_progress" ? estimateFinish(b) : null;
+  const earlyDays = (b.status === "done" && b.endDate && b.plannedEnd && b.endDate < b.plannedEnd) ? daysDiff(b.endDate, b.plannedEnd) : 0;
   const inner = document.getElementById("overlay-inner");
   inner.innerHTML = `
     <div class="detail-top">
       <button class="back-btn sans" id="backBtn">← 서재로</button>
       <select class="status-select" id="statusSelect">
+        <option value="wishlist" ${b.status==="wishlist"?"selected":""}>읽고 싶음</option>
         <option value="not_started" ${b.status==="not_started"?"selected":""}>시작 전</option>
         <option value="in_progress" ${b.status==="in_progress"?"selected":""}>읽는 중</option>
         <option value="done" ${b.status==="done"?"selected":""}>완료</option>
+        <option value="dropped" ${b.status==="dropped"?"selected":""}>중단</option>
       </select>
     </div>
 
@@ -805,12 +1073,12 @@ function renderDetail(){
     </div>
     <div class="meta-dates">
       <div class="meta-date-chip ${b.startDate?"filled":""}">
-        <span class="mdc-label sans">시작일</span>
-        <span class="mdc-value">${b.startDate ? fmtDate(b.startDate) : "아직 시작 전"}</span>
+        <span class="mdc-label sans">시작일 (눌러서 변경)</span>
+        <input type="date" class="mdc-input" id="startDateInput" value="${b.startDate||""}" />
       </div>
       <div class="meta-date-chip ${b.endDate?"filled":""}">
-        <span class="mdc-label sans">완료일</span>
-        <span class="mdc-value">${b.endDate ? fmtDate(b.endDate) : "—"}</span>
+        <span class="mdc-label sans">완료일 (눌러서 변경)</span>
+        <input type="date" class="mdc-input" id="endDateInput" value="${b.endDate||""}" />
       </div>
     </div>
 
@@ -830,6 +1098,19 @@ function renderDetail(){
           <input type="number" id="totalPageInput" value="${b.totalPages}" min="0" /> 페이지
         </div>
       </div>
+      <div class="finish-row sans">
+        <div class="fr-item">
+          <span class="fr-label">완독 예상일</span>
+          <b>${est ? fmtDate(est.date) : "—"}</b>
+          <span class="fr-note">${est ? `하루 평균 ${est.pace}쪽 기준` : "읽는 중 + 페이지를 기록하면 계산돼요"}</span>
+        </div>
+        <div class="fr-item">
+          <span class="fr-label">목표 완독일 (눌러서 변경)</span>
+          <input type="date" class="mdc-input" id="plannedEndInput" value="${b.plannedEnd||""}" />
+          <span class="fr-note">시작 2일째부터 예상일로 자동 설정돼요</span>
+        </div>
+      </div>
+      ${earlyDays > 0 ? `<div class="early-chip">⚡ 목표보다 ${earlyDays}일 일찍 완독했어요!</div>` : ""}
     </div>
 
     <div class="detail-section">
@@ -874,6 +1155,11 @@ function renderDetail(){
     </div>
 
     <div class="detail-section">
+      <h3 class="sans">이 책에서 얻은 것 (한 줄)</h3>
+      <input class="takeaway-input" id="takeawayInput" value="${escapeHtml(b.takeaway||"")}" placeholder="배운 점이나 써먹고 싶은 점을 한 줄로 적어보세요" />
+    </div>
+
+    <div class="detail-section">
       <h3 class="sans">독후감</h3>
       <textarea class="review-area" id="reviewArea" placeholder="다 읽고 나서, 혹은 읽는 중간에도 생각을 남겨보세요.">${escapeHtml(b.review)}</textarea>
       <div class="review-save-row">
@@ -892,19 +1178,41 @@ function renderDetail(){
   document.getElementById("statusSelect").addEventListener("change", async (e)=>{
     const newStatus = e.target.value;
     const patch = { status:newStatus };
-    if(newStatus === "in_progress" && !b.startDate) patch.startDate = todayStr();
+    if(newStatus === "in_progress"){
+      if(!b.startDate) patch.startDate = todayStr();
+      patch.endDate = null;
+    }
     if(newStatus === "done"){
       if(!b.endDate) patch.endDate = todayStr();
       if(!b.startDate) patch.startDate = todayStr();
       if(b.totalPages) patch.currentPage = b.totalPages;
     }
-    if(newStatus === "not_started"){ patch.startDate = null; patch.endDate = null; }
+    if(newStatus === "not_started" || newStatus === "wishlist"){ patch.startDate = null; patch.endDate = null; patch.plannedEnd = null; }
     await updateBook(patch);
     renderDetail();
   });
 
   document.getElementById("titleInput").addEventListener("blur", async (e)=>{
     await updateBook({ title: e.target.value.trim() || "제목 없음" });
+  });
+  ["startDate","endDate"].forEach(field=>{
+    const input = document.getElementById(field+"Input");
+    const chip = input.closest(".meta-date-chip");
+    chip.addEventListener("click", ()=>{ try{ input.showPicker(); }catch(_){} });
+    input.addEventListener("change", async (e)=>{
+      await updateBook({ [field]: e.target.value || null });
+      renderDetail();
+    });
+  });
+  document.getElementById("takeawayInput").addEventListener("blur", async (e)=>{
+    await updateBook({ takeaway: e.target.value.trim() });
+  });
+  document.getElementById("takeawayInput").addEventListener("keydown", (e)=>{ if(e.key === "Enter") e.target.blur(); });
+  const plannedInput = document.getElementById("plannedEndInput");
+  plannedInput.addEventListener("click", ()=>{ try{ plannedInput.showPicker(); }catch(_){} });
+  plannedInput.addEventListener("change", async (e)=>{
+    await updateBook({ plannedEnd: e.target.value || null });
+    renderDetail();
   });
   document.getElementById("authorInput").addEventListener("blur", async (e)=>{
     await updateBook({ author: e.target.value.trim() });
@@ -917,7 +1225,13 @@ function renderDetail(){
   });
 
   document.getElementById("currentPageInput").addEventListener("change", async (e)=>{
-    await updateBook({ currentPage: Math.max(0, parseInt(e.target.value)||0) });
+    const cp = Math.max(0, parseInt(e.target.value)||0);
+    const patch = { currentPage: cp };
+    if(cp > 0 && (b.status === "not_started" || b.status === "wishlist")){
+      patch.status = "in_progress";
+      if(!b.startDate) patch.startDate = todayStr();
+    }
+    await updateBook(patch);
     renderDetail();
   });
   document.getElementById("totalPageInput").addEventListener("change", async (e)=>{
@@ -1003,6 +1317,10 @@ async function stopAndSaveSession(showFeedback){
   const minutes = Math.round(timer.elapsed/60);
   if(minutes > 0 && b){
     b.sessions.push({ date: todayStr(), minutes });
+    if(b.status === "not_started" || b.status === "wishlist"){
+      b.status = "in_progress";
+      if(!b.startDate) b.startDate = todayStr();
+    }
     await updateBook({});
   }
   timer = { running:false, startTs:null, elapsed:0 };
