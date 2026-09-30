@@ -668,15 +668,63 @@ function renderHome(){
   renderRewards();
 }
 
-function showHome(){
+// ---------- Browser back/forward support ----------
+// Every screen change is recorded as a history entry via pushHistory().
+// The popstate listener (below) replays the matching screen WITHOUT
+// pushing again, so the back button moves within the app first and only
+// leaves the site once there's nothing app-internal left to go back to.
+let historyInit = false;
+function pushHistory(state){
+  if(!historyInit){ history.replaceState(state, ""); historyInit = true; }
+  else{ history.pushState(state, ""); }
+}
+
+function applyHome(){
   document.getElementById("homeScreen").classList.remove("hidden");
   document.getElementById("library").classList.add("hidden");
   renderHome();
 }
-function showLibrary(){
+function applyLibrary(){
   document.getElementById("homeScreen").classList.add("hidden");
   document.getElementById("library").classList.remove("hidden");
   renderLibrary();
+}
+function applyDetailDirect(id){
+  currentBookId = id;
+  document.getElementById("homeScreen").classList.add("hidden");
+  document.getElementById("library").classList.remove("hidden");
+  const overlay = document.getElementById("overlay");
+  overlay.removeAttribute("style");
+  overlay.classList.add("open", "expanded");
+  renderDetail();
+}
+function applyCloseDetailDirect(){
+  const overlay = document.getElementById("overlay");
+  overlay.classList.remove("open", "expanded");
+  overlay.removeAttribute("style");
+  currentBookId = null;
+  applyLibrary();
+}
+
+window.addEventListener("popstate", (e)=>{
+  const state = e.state || { view:"home" };
+  if(state.view === "detail"){
+    applyDetailDirect(state.id);
+  }else if(state.view === "library"){
+    if(document.getElementById("overlay").classList.contains("open")) applyCloseDetailDirect();
+    else applyLibrary();
+  }else{
+    applyHome();
+  }
+});
+
+function showHome(){
+  applyHome();
+  pushHistory({ view:"home" });
+}
+function showLibrary(){
+  applyLibrary();
+  pushHistory({ view:"library" });
 }
 
 function barChartHtml(items){
@@ -1220,6 +1268,7 @@ function openBook(id, cardEl){
       overlay.classList.add("expanded");
     });
   });
+  pushHistory({ view:"detail", id });
 }
 
 function closeBook(){
@@ -1239,6 +1288,7 @@ function closeBook(){
     currentBookId = null;
     renderLibrary();
   }, 380);
+  pushHistory({ view:"library" });
 }
 
 function getBook(){
