@@ -20,8 +20,60 @@
 </div>
 <div id="sharedBookOverlay" class="hidden"></div>
 
+<div id="mboScreen">
+  <div class="mbo-wrap">
+    <p class="home-eyebrow">나의 생활 MBO</p>
+    <h1 class="mbo-title">오늘 뭘 채웠나요?</h1>
+    <p class="home-sub">카테고리를 눌러서 기록해 보세요.</p>
+    <div class="mbo-grid" id="mboGrid"></div>
+  </div>
+</div>
+
+<div id="bridgeScreen" class="hidden">
+  <div class="home-wrap">
+    <button class="home-link" id="bridgeBackBtn" type="button">← MBO 메인</button>
+    <p class="home-eyebrow" id="bridgeEyebrow"></p>
+    <h1 id="bridgeTitle">습관</h1>
+    <p class="home-sub" id="bridgeStreak"></p>
+
+    <div class="mini-heatmap-wrap">
+      <div class="heatmap-grid mini-heatmap" id="bridgeHeatmap"></div>
+      <div class="heatmap-legend sans" style="justify-content:center; margin-top:8px;">
+        <span>최근 12주</span>
+      </div>
+    </div>
+
+    <div class="reward-card" id="bridgeWidgetCard">
+      <div class="rc-head"><h3>오늘 기록</h3><span class="rc-sub" id="bridgeTodayLabel"></span></div>
+      <div id="bridgeWidget"></div>
+    </div>
+
+    <button class="home-cta ghost-cta" id="goRoutineDetailBtn" type="button">기록 모아보기 →</button>
+  </div>
+</div>
+
+<div id="routineDetailScreen" class="hidden">
+  <div class="home-wrap" style="max-width:640px;">
+    <button class="home-link" id="routineDetailBackBtn" type="button">← 뒤로</button>
+    <h1 id="routineDetailTitle">기록</h1>
+    <div class="retro-grid" id="routineDetailStats"></div>
+
+    <div class="reward-card">
+      <div class="rc-head"><h3>날짜 선택해서 기록하기</h3></div>
+      <div class="routine-edit-row">
+        <input type="date" id="routineEditDate" />
+        <div id="routineEditValue"></div>
+        <button id="routineEditSaveBtn" type="button">저장</button>
+      </div>
+    </div>
+
+    <div class="retro-sec"><h4>전체 기록</h4><div id="routineEntryList"></div></div>
+  </div>
+</div>
+
 <div id="homeScreen">
   <div class="home-wrap">
+    <button class="home-link" id="backToMboBtn" type="button">← MBO 메인</button>
     <div class="home-hero">
       <p class="home-eyebrow" id="homeEyebrow">100권 읽기 프로젝트</p>
       <h1>지금까지 <span id="homeCount">0</span>권</h1>
@@ -96,8 +148,9 @@
   <div class="contrib-wrap">
     <div class="contrib-head">
       <h3 id="contribTitle">올해 독서 기록</h3>
-      <span class="contrib-desc sans">타이머로 기록한 날이 표시돼요. 진할수록 그날 더 오래 읽은 거예요.</span>
+      <select id="contribYearSelect" class="year-select sans"></select>
     </div>
+    <span class="contrib-desc sans">타이머로 기록한 날이 표시돼요. 진할수록 그날 더 오래 읽은 거예요.</span>
     <div class="contrib-scroll">
       <div class="contrib-inner">
         <div class="contrib-months" id="contribMonths"></div>
@@ -120,7 +173,10 @@
       <div class="bar-chart" id="statsWeek"></div>
     </div>
     <div class="stat-panel">
-      <h3>월별 완독 권수</h3>
+      <div class="stat-panel-head">
+        <h3>월별 완독 권수</h3>
+        <select id="statsMonthYearSelect" class="year-select sans"></select>
+      </div>
       <div class="bar-chart" id="statsMonth"></div>
     </div>
     <div class="stat-panel">
@@ -325,6 +381,16 @@ function pctOf(book){
   return Math.max(0, Math.min(100, Math.round((book.currentPage/book.totalPages)*100)));
 }
 
+const ROUTINE_DEFS = [
+  { id:"qt", name:"큐티", icon:"🙏", kind:"check" },
+  { id:"diary", name:"일기", icon:"📔", kind:"note" },
+  { id:"thoughts", name:"오늘의 생각", icon:"💭", kind:"note" },
+  { id:"exercise_am", name:"아침운동", icon:"🚴", kind:"check" },
+  { id:"exercise_pm", name:"저녁운동", icon:"🏋️", kind:"check" },
+  { id:"wake_early", name:"일찍 일어나기", icon:"🌅", kind:"time", goalTime:"07:00" },
+  { id:"sleep_early", name:"일찍 자기", icon:"🌙", kind:"time", goalTime:"23:30" }
+];
+
 async function loadData(){
   if(tryRenderSharedFromHash()) return;
   try{
@@ -332,7 +398,11 @@ async function loadData(){
     if(raw) data = JSON.parse(raw);
   }catch(e){ /* first run */ }
   if(typeof data.baselineBooks !== "number") data.baselineBooks = 0;
-  showHome();
+  if(!Array.isArray(data.routines)){
+    data.routines = ROUTINE_DEFS.map(r => Object.assign({}, r, { entries: [] }));
+    saveData();
+  }
+  showMbo();
 }
 async function saveData(){
   try{
@@ -363,6 +433,43 @@ function getFilteredSortedBooks(){
 function dkey(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 function parseD(s){ return new Date(s+"T00:00:00"); }
 function daysDiff(a, b){ return Math.round((parseD(b) - parseD(a)) / 86400000); }
+
+// ---------- Generic life-MBO routines (큐티, 일기, 운동, 일찍 자고 일어나기 등) ----------
+function getRoutine(id){ return (data.routines||[]).find(r=>r.id===id); }
+function routineEntry(r, dateKey){ return (r.entries||[]).find(e=>e.date===dateKey); }
+function routineSuccess(r, entry){
+  if(!entry) return false;
+  if(r.kind === "check") return !!entry.done;
+  if(r.kind === "note") return !!(entry.note && entry.note.trim());
+  if(r.kind === "time") return !!entry.time && entry.time <= r.goalTime;
+  return false;
+}
+function routineStreak(r){
+  let n = 0;
+  const d = new Date(); d.setHours(0,0,0,0);
+  while(routineSuccess(r, routineEntry(r, dkey(d)))){ n++; d.setDate(d.getDate()-1); }
+  return n;
+}
+function upsertRoutineEntry(routineId, dateKey, payload){
+  const r = getRoutine(routineId);
+  if(!r) return;
+  r.entries = r.entries || [];
+  let e = r.entries.find(x=>x.date===dateKey);
+  if(!e){ e = { date: dateKey }; r.entries.push(e); }
+  Object.assign(e, payload);
+}
+function deleteRoutineEntry(routineId, dateKey){
+  const r = getRoutine(routineId);
+  if(!r) return;
+  r.entries = (r.entries||[]).filter(e=>e.date!==dateKey);
+}
+function routineValueLabel(r, entry){
+  if(!entry) return "—";
+  if(r.kind === "check") return entry.done ? "완료" : "미완료";
+  if(r.kind === "note") return entry.note || "—";
+  if(r.kind === "time") return entry.time || "—";
+  return "—";
+}
 
 function estimateFinish(b){
   if(!b.startDate || !b.totalPages || !(b.currentPage > 0) || b.currentPage >= b.totalPages) return null;
@@ -490,8 +597,7 @@ function renderRetro(year){
   const quotes = done.flatMap(b => (b.quotes||[]).map(q => ({q,b}))).sort((x,y)=>(y.b.rating||0)-(x.b.rating||0)).slice(0,5);
   const takeaways = done.filter(b => b.takeaway);
   const monthNames = ["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"];
-  const monthCounts = new Array(12).fill(0);
-  done.forEach(b => { monthCounts[parseInt(b.endDate.slice(5,7))-1]++; });
+  const monthCounts = monthlyDoneCounts(year);
   const bestIdx = monthCounts.indexOf(Math.max(...monthCounts));
   body.innerHTML = `
     <div class="retro-grid">
@@ -629,6 +735,148 @@ function tryRenderSharedFromHash(){
   }
 }
 
+function renderMboMain(){
+  const grid = document.getElementById("mboGrid");
+  const totalBooks = totalReadCount();
+  let html = `
+    <div class="mbo-card" data-mbo="reading">
+      <div class="mbo-icon">📚</div>
+      <div class="mbo-name">독서</div>
+      <div class="mbo-sub">총 ${totalBooks}권</div>
+    </div>`;
+  (data.routines||[]).forEach(r=>{
+    const streak = routineStreak(r);
+    const todayOk = routineSuccess(r, routineEntry(r, dkey(new Date())));
+    html += `
+      <div class="mbo-card" data-mbo="${r.id}">
+        <div class="mbo-icon">${r.icon}</div>
+        <div class="mbo-name">${escapeHtml(r.name)}</div>
+        <div class="mbo-sub">${streak > 0 ? `${streak}일 연속` : "오늘 시작해 보세요"} ${todayOk ? "✓" : ""}</div>
+      </div>`;
+  });
+  grid.innerHTML = html;
+  grid.querySelectorAll("[data-mbo]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const id = el.dataset.mbo;
+      if(id === "reading") showHome(); else showBridge(id);
+    });
+  });
+}
+
+function routineMiniHeatmapHtml(r, days){
+  const today = new Date(); today.setHours(0,0,0,0);
+  let cells = "";
+  for(let i=days-1;i>=0;i--){
+    const d = new Date(today); d.setDate(d.getDate()-i);
+    const ok = routineSuccess(r, routineEntry(r, dkey(d)));
+    cells += `<div class="heatmap-cell ${ok?"l3":""}" title="${dkey(d)}"></div>`;
+  }
+  return cells;
+}
+
+function renderBridge(routineId){
+  const r = getRoutine(routineId);
+  if(!r) return;
+  const streak = routineStreak(r);
+  document.getElementById("bridgeEyebrow").textContent = "나의 생활 MBO";
+  document.getElementById("bridgeTitle").textContent = `${r.icon} ${r.name}`;
+  document.getElementById("bridgeStreak").textContent = streak > 0 ? `${streak}일 연속 하고 있어요` : "오늘부터 시작해 볼까요?";
+  document.getElementById("bridgeHeatmap").innerHTML = routineMiniHeatmapHtml(r, 84);
+
+  const todayKey = dkey(new Date());
+  const entry = routineEntry(r, todayKey);
+  document.getElementById("bridgeTodayLabel").textContent = todayKey;
+  const widget = document.getElementById("bridgeWidget");
+
+  if(r.kind === "check"){
+    const done = !!(entry && entry.done);
+    widget.innerHTML = `<button class="home-cta" id="routineActionBtn" style="${done?"background:var(--cloth);border-color:var(--cloth);":""}">${done ? "오늘 완료함 ✓" : "오늘 완료로 표시"}</button>`;
+    document.getElementById("routineActionBtn").addEventListener("click", async ()=>{
+      upsertRoutineEntry(routineId, todayKey, { done: !done });
+      await saveData();
+      renderBridge(routineId);
+    });
+  }else if(r.kind === "note"){
+    widget.innerHTML = `
+      <textarea id="routineNoteInput" class="review-area" style="min-height:90px;" placeholder="오늘 기록을 남겨보세요">${escapeHtml((entry&&entry.note)||"")}</textarea>
+      <div class="btn-row" style="justify-content:flex-end; margin-top:10px;"><button id="routineActionBtn">저장</button></div>`;
+    document.getElementById("routineActionBtn").addEventListener("click", async ()=>{
+      const val = document.getElementById("routineNoteInput").value.trim();
+      upsertRoutineEntry(routineId, todayKey, { note: val });
+      await saveData();
+      renderBridge(routineId);
+    });
+  }else if(r.kind === "time"){
+    widget.innerHTML = `
+      <div class="fetch-row" style="align-items:center;">
+        <input type="time" id="routineTimeInput" value="${(entry&&entry.time)||""}" style="width:auto;" />
+        <span class="rc-sub">목표 ${r.goalTime} 이전</span>
+      </div>
+      <div class="btn-row" style="justify-content:flex-end; margin-top:10px;"><button id="routineActionBtn">저장</button></div>
+      ${entry && entry.time ? `<p class="rc-note">${entry.time <= r.goalTime ? "🎉 목표를 지켰어요!" : "목표보다 늦었어요. 내일 다시 도전해요."}</p>` : ""}`;
+    document.getElementById("routineActionBtn").addEventListener("click", async ()=>{
+      const val = document.getElementById("routineTimeInput").value;
+      if(!val) return;
+      upsertRoutineEntry(routineId, todayKey, { time: val });
+      await saveData();
+      renderBridge(routineId);
+    });
+  }
+}
+
+function renderRoutineDetail(routineId){
+  const r = getRoutine(routineId);
+  if(!r) return;
+  document.getElementById("routineDetailTitle").textContent = `${r.icon} ${r.name} 전체 기록`;
+
+  const entries = (r.entries||[]).slice().sort((a,b)=> b.date.localeCompare(a.date));
+  const successCount = entries.filter(e=>routineSuccess(r,e)).length;
+  const rate = entries.length ? Math.round(successCount/entries.length*100) : 0;
+  document.getElementById("routineDetailStats").innerHTML = `
+    <div class="retro-stat"><b>${routineStreak(r)}</b><span>연속일</span></div>
+    <div class="retro-stat"><b>${entries.length}</b><span>총 기록일</span></div>
+    <div class="retro-stat"><b>${rate}%</b><span>달성률</span></div>`;
+
+  const editDate = document.getElementById("routineEditDate");
+  editDate.value = dkey(new Date());
+  function renderEditValueInput(){
+    const existing = routineEntry(r, editDate.value);
+    const box = document.getElementById("routineEditValue");
+    if(r.kind === "check"){
+      box.innerHTML = `<select id="routineEditVal"><option value="1" ${existing&&existing.done?"selected":""}>완료</option><option value="0" ${!(existing&&existing.done)?"selected":""}>미완료</option></select>`;
+    }else if(r.kind === "note"){
+      box.innerHTML = `<input type="text" id="routineEditVal" placeholder="내용" value="${escapeHtml((existing&&existing.note)||"")}" />`;
+    }else{
+      box.innerHTML = `<input type="time" id="routineEditVal" value="${(existing&&existing.time)||""}" />`;
+    }
+  }
+  renderEditValueInput();
+  editDate.onchange = renderEditValueInput;
+
+  document.getElementById("routineEditSaveBtn").onclick = async ()=>{
+    const val = document.getElementById("routineEditVal").value;
+    const payload = r.kind === "check" ? { done: val === "1" } : r.kind === "note" ? { note: val } : { time: val };
+    upsertRoutineEntry(routineId, editDate.value, payload);
+    await saveData();
+    renderRoutineDetail(routineId);
+  };
+
+  const list = document.getElementById("routineEntryList");
+  list.innerHTML = entries.length ? entries.map(e => `
+    <div class="retro-line routine-entry-row">
+      <span class="rl-title">${fmtDate(e.date)}${routineSuccess(r,e) ? ' <span class="pill pill-done">달성</span>' : ""}</span>
+      <span>${escapeHtml(routineValueLabel(r,e))}</span>
+      <button class="del" data-del-date="${e.date}">삭제</button>
+    </div>`).join("") : `<p class="empty-hint sans">아직 기록이 없어요.</p>`;
+  list.querySelectorAll("[data-del-date]").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      deleteRoutineEntry(routineId, btn.dataset.delDate);
+      await saveData();
+      renderRoutineDetail(routineId);
+    });
+  });
+}
+
 function renderHome(){
   data.baselineBooks = data.baselineBooks || 0;
   const doneCount = data.books.filter(b=>b.status==="done").length;
@@ -679,19 +927,29 @@ function pushHistory(state){
   else{ history.pushState(state, ""); }
 }
 
+const ALL_SCREENS = ["mboScreen","homeScreen","library","bridgeScreen","routineDetailScreen"];
+function hideAllScreens(){
+  ALL_SCREENS.forEach(id => document.getElementById(id).classList.add("hidden"));
+}
+
+function applyMbo(){
+  hideAllScreens();
+  document.getElementById("mboScreen").classList.remove("hidden");
+  renderMboMain();
+}
 function applyHome(){
+  hideAllScreens();
   document.getElementById("homeScreen").classList.remove("hidden");
-  document.getElementById("library").classList.add("hidden");
   renderHome();
 }
 function applyLibrary(){
-  document.getElementById("homeScreen").classList.add("hidden");
+  hideAllScreens();
   document.getElementById("library").classList.remove("hidden");
   renderLibrary();
 }
 function applyDetailDirect(id){
   currentBookId = id;
-  document.getElementById("homeScreen").classList.add("hidden");
+  hideAllScreens();
   document.getElementById("library").classList.remove("hidden");
   const overlay = document.getElementById("overlay");
   overlay.removeAttribute("style");
@@ -705,19 +963,38 @@ function applyCloseDetailDirect(){
   currentBookId = null;
   applyLibrary();
 }
+let currentBridgeId = null;
+let currentRoutineDetailId = null;
+function applyBridge(routineId){
+  currentBridgeId = routineId;
+  hideAllScreens();
+  document.getElementById("bridgeScreen").classList.remove("hidden");
+  renderBridge(routineId);
+}
+function applyRoutineDetail(routineId){
+  currentRoutineDetailId = routineId;
+  hideAllScreens();
+  document.getElementById("routineDetailScreen").classList.remove("hidden");
+  renderRoutineDetail(routineId);
+}
 
 window.addEventListener("popstate", (e)=>{
-  const state = e.state || { view:"home" };
-  if(state.view === "detail"){
-    applyDetailDirect(state.id);
-  }else if(state.view === "library"){
+  const state = e.state || { view:"mbo" };
+  if(state.view === "detail") applyDetailDirect(state.id);
+  else if(state.view === "library"){
     if(document.getElementById("overlay").classList.contains("open")) applyCloseDetailDirect();
     else applyLibrary();
-  }else{
-    applyHome();
   }
+  else if(state.view === "home") applyHome();
+  else if(state.view === "bridge") applyBridge(state.id);
+  else if(state.view === "routineDetail") applyRoutineDetail(state.id);
+  else applyMbo();
 });
 
+function showMbo(){
+  applyMbo();
+  pushHistory({ view:"mbo" });
+}
 function showHome(){
   applyHome();
   pushHistory({ view:"home" });
@@ -725,6 +1002,14 @@ function showHome(){
 function showLibrary(){
   applyLibrary();
   pushHistory({ view:"library" });
+}
+function showBridge(routineId){
+  applyBridge(routineId);
+  pushHistory({ view:"bridge", id:routineId });
+}
+function showRoutineDetail(routineId){
+  applyRoutineDetail(routineId);
+  pushHistory({ view:"routineDetail", id:routineId });
 }
 
 function barChartHtml(items){
@@ -737,6 +1022,7 @@ function barChartHtml(items){
     </div>`).join("");
 }
 
+let statsMonthYear = new Date().getFullYear();
 function renderStats(){
   const dayNames = ["일","월","화","수","목","금","토"];
   const byDate = {};
@@ -749,14 +1035,16 @@ function renderStats(){
   }
   document.getElementById("statsWeek").innerHTML = barChartHtml(week);
 
-  const months = [];
-  for(let i=5;i>=0;i--){
-    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth()-i);
-    const key = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
-    const cnt = data.books.filter(b=>b.status==="done" && b.endDate && b.endDate.startsWith(key)).length;
-    months.push({ label:(d.getMonth()+1)+"월", value:cnt });
+  const myEl = document.getElementById("statsMonthYearSelect");
+  const myYears = yearsWithData();
+  if(myEl.dataset.filled !== myYears.join(",")){
+    myEl.innerHTML = myYears.map(y=>`<option value="${y}">${y}년</option>`).join("");
+    myEl.dataset.filled = myYears.join(",");
   }
-  document.getElementById("statsMonth").innerHTML = barChartHtml(months);
+  myEl.value = String(statsMonthYear);
+  const monthLabels = ["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"];
+  const monthVals = monthlyDoneCounts(String(statsMonthYear));
+  document.getElementById("statsMonth").innerHTML = barChartHtml(monthLabels.map((m,i)=>({label:m.replace("월",""), value:monthVals[i]})));
 
   const yearCount = {};
   const yearBestMonth = {};
@@ -794,8 +1082,33 @@ function renderStats(){
   }
 }
 
+function yearsWithData(){
+  const ys = new Set([String(new Date().getFullYear()), String(new Date().getFullYear()+1)]);
+  data.books.forEach(b=>{
+    if(b.endDate) ys.add(b.endDate.slice(0,4));
+    if(b.startDate) ys.add(b.startDate.slice(0,4));
+    (b.sessions||[]).forEach(s=> ys.add(s.date.slice(0,4)));
+  });
+  return [...ys].sort();
+}
+function monthlyDoneCounts(year){
+  const counts = new Array(12).fill(0);
+  data.books.forEach(b=>{
+    if(b.status==="done" && b.endDate && b.endDate.startsWith(year)) counts[parseInt(b.endDate.slice(5,7))-1]++;
+  });
+  return counts;
+}
+
+let contribYear = new Date().getFullYear();
 function renderContrib(){
-  const year = new Date().getFullYear();
+  const sel = document.getElementById("contribYearSelect");
+  const years = yearsWithData();
+  if(sel.dataset.filled !== years.join(",")){
+    sel.innerHTML = years.map(y=>`<option value="${y}">${y}년</option>`).join("");
+    sel.dataset.filled = years.join(",");
+  }
+  sel.value = String(contribYear);
+  const year = contribYear;
   const byDate = {};
   data.books.flatMap(b=>b.sessions||[]).forEach(s=>{ byDate[s.date] = (byDate[s.date]||0) + s.minutes; });
   const keyOf = d => d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
@@ -1099,6 +1412,10 @@ document.getElementById("baselineInput").addEventListener("change", async (e)=>{
   renderHome();
 });
 document.getElementById("enterLibraryBtn").addEventListener("click", showLibrary);
+document.getElementById("backToMboBtn").addEventListener("click", showMbo);
+document.getElementById("bridgeBackBtn").addEventListener("click", showMbo);
+document.getElementById("routineDetailBackBtn").addEventListener("click", ()=> showBridge(currentRoutineDetailId));
+document.getElementById("goRoutineDetailBtn").addEventListener("click", ()=> showRoutineDetail(currentBridgeId));
 document.getElementById("openShareBtn").addEventListener("click", openShareModal);
 document.getElementById("closeShareBtn").addEventListener("click", ()=> document.getElementById("shareModal").classList.add("hidden"));
 document.getElementById("regenShareBtn").addEventListener("click", refreshShareLink);
@@ -1108,6 +1425,14 @@ document.getElementById("copyShareBtn").addEventListener("click", async ()=>{
   area.select();
   try{ await navigator.clipboard.writeText(area.value); document.getElementById("shareCopyStatus").textContent = "복사했어요!"; }
   catch(e){ document.getElementById("shareCopyStatus").textContent = "복사 실패 — 직접 선택해서 복사해 주세요."; }
+});
+document.getElementById("contribYearSelect").addEventListener("change", (e)=>{
+  contribYear = parseInt(e.target.value);
+  renderContrib();
+});
+document.getElementById("statsMonthYearSelect").addEventListener("change", (e)=>{
+  statsMonthYear = parseInt(e.target.value);
+  renderStats();
 });
 document.getElementById("markAllPublicBtn").addEventListener("click", async ()=>{
   if(!confirm("서재의 모든 책을 공개로 바꿀까요?")) return;
