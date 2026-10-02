@@ -695,3 +695,15 @@ button.del{
   font-family:"Avenir Next","Segoe UI",sans-serif; font-size:11.5px; cursor:pointer; padding:0;
 }
 button.del:hover{ color:var(--danger); }
+
+/* ---------- Goal wizard, motivation line ---------- */
+.motivation-line{
+  font-size:13px; color:var(--cloth); font-weight:600; margin:6px 0 0;
+}
+.wizard-choices{ display:flex; flex-wrap:wrap; gap:8px; margin-top:4px; }
+.wizard-choice{
+  background:var(--card); color:var(--ink); border:1px solid var(--line-strong);
+  border-radius:8px; padding:10px 14px; font-size:13.5px; font-weight:600;
+}
+.wizard-choice:hover{ border-color:var(--cloth); opacity:1; }
+.goal-nudge{ text-align:left; }
