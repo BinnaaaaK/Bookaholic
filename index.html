@@ -26,6 +26,28 @@
     <h1 class="mbo-title">오늘 뭘 채웠나요?</h1>
     <p class="home-sub">카테고리를 눌러서 기록해 보세요.</p>
     <div class="mbo-grid" id="mboGrid"></div>
+
+    <div class="heatmap-wrap" style="text-align:left; margin-top:36px;">
+      <h3>오늘의 생활 기록 <span class="stat-unit">(전체 목표 평균 달성률)</span></h3>
+      <p class="heatmap-desc sans">진할수록 그날 더 많은 목표를 해낸 거예요. 독서와 모든 루틴을 합쳐서 계산해요.</p>
+      <div class="heatmap-grid mini-heatmap" id="mboCombinedHeatmap" style="justify-content:flex-start;"></div>
+      <div class="heatmap-legend sans"><span>적게</span><span class="heatmap-cell"></span><span class="heatmap-cell l1"></span><span class="heatmap-cell l2"></span><span class="heatmap-cell l3"></span><span class="heatmap-cell l4"></span><span>많이</span></div>
+    </div>
+
+    <button class="home-cta ghost-cta" id="openLifeRetroBtn" type="button" style="margin-top:22px;">📊 나의 생활 회고 보기</button>
+  </div>
+</div>
+
+<div id="lifeRetroModal" class="modal-overlay hidden">
+  <div class="modal-box retro-box">
+    <div class="retro-head">
+      <h3>나의 생활 회고</h3>
+      <select id="lifeRetroYear" class="modal-select" style="width:auto;"></select>
+    </div>
+    <div id="lifeRetroBody"></div>
+    <div class="modal-actions" style="justify-content:flex-end;">
+      <button class="secondary" id="closeLifeRetroBtn" type="button">닫기</button>
+    </div>
   </div>
 </div>
 
@@ -35,6 +57,7 @@
     <p class="home-eyebrow" id="bridgeEyebrow"></p>
     <h1 id="bridgeTitle">습관</h1>
     <p class="home-sub" id="bridgeStreak"></p>
+    <p class="motivation-line" id="bridgeMotivation"></p>
 
     <div class="mini-heatmap-wrap">
       <div class="heatmap-grid mini-heatmap" id="bridgeHeatmap"></div>
@@ -43,10 +66,14 @@
       </div>
     </div>
 
+    <div class="reward-card" id="bridgeGoalCard"><div id="bridgeGoalSection"></div></div>
+
     <div class="reward-card" id="bridgeWidgetCard">
       <div class="rc-head"><h3>오늘 기록</h3><span class="rc-sub" id="bridgeTodayLabel"></span></div>
       <div id="bridgeWidget"></div>
     </div>
+
+    <div id="bridgeRewards"></div>
 
     <button class="home-cta ghost-cta" id="goRoutineDetailBtn" type="button">기록 모아보기 →</button>
   </div>
@@ -400,8 +427,9 @@ async function loadData(){
   if(typeof data.baselineBooks !== "number") data.baselineBooks = 0;
   if(!Array.isArray(data.routines)){
     data.routines = ROUTINE_DEFS.map(r => Object.assign({}, r, { entries: [] }));
-    saveData();
   }
+  data.routines.forEach(r => { if(!r.goal) r.goal = { timesPerWeek: null, streakTarget: null }; });
+  saveData();
   showMbo();
 }
 async function saveData(){
@@ -735,6 +763,78 @@ function tryRenderSharedFromHash(){
   }
 }
 
+function dailyCompletionFraction(dateKey){
+  const routines = data.routines || [];
+  const hadReading = data.books.some(b => (b.sessions||[]).some(s => s.date === dateKey));
+  let okCount = hadReading ? 1 : 0;
+  routines.forEach(r => { if(routineSuccess(r, routineEntry(r, dateKey))) okCount++; });
+  const total = routines.length + 1;
+  return total ? okCount/total : 0;
+}
+function renderMboCombinedHeatmap(){
+  const el = document.getElementById("mboCombinedHeatmap");
+  if(!el) return;
+  const today = new Date(); today.setHours(0,0,0,0);
+  let cells = "";
+  for(let i=83;i>=0;i--){
+    const d = new Date(today); d.setDate(d.getDate()-i);
+    const key = dkey(d);
+    const frac = dailyCompletionFraction(key);
+    let level = "";
+    if(frac >= 1) level = "l4";
+    else if(frac >= 0.67) level = "l3";
+    else if(frac >= 0.34) level = "l2";
+    else if(frac > 0) level = "l1";
+    cells += `<div class="heatmap-cell ${level}" title="${key} · ${Math.round(frac*100)}% 달성"></div>`;
+  }
+  el.innerHTML = cells;
+}
+
+function openLifeRetro(){
+  const years = new Set([String(new Date().getFullYear())]);
+  data.books.forEach(b=>{ if(b.endDate) years.add(b.endDate.slice(0,4)); });
+  (data.routines||[]).forEach(r=> (r.entries||[]).forEach(e=> years.add(e.date.slice(0,4))));
+  const sel = document.getElementById("lifeRetroYear");
+  sel.innerHTML = [...years].sort().reverse().map(y=>`<option value="${y}">${y}년</option>`).join("");
+  renderLifeRetro(sel.value);
+  document.getElementById("lifeRetroModal").classList.remove("hidden");
+}
+function renderLifeRetro(year){
+  const body = document.getElementById("lifeRetroBody");
+  const booksDone = data.books.filter(b=>b.status==="done" && b.endDate && b.endDate.startsWith(year)).length;
+  const readingMinutes = data.books.flatMap(b=>b.sessions||[]).filter(s=>s.date.startsWith(year)).reduce((a,s)=>a+s.minutes,0);
+
+  const rows = (data.routines||[]).map(r=>{
+    const yearEntries = (r.entries||[]).filter(e=>e.date.startsWith(year));
+    const successes = yearEntries.filter(e=>routineSuccess(r,e)).length;
+    const rate = yearEntries.length ? Math.round(successes/yearEntries.length*100) : 0;
+    return { r, count: yearEntries.length, successes, rate };
+  });
+  const mostConsistent = rows.filter(x=>x.count>0).sort((a,b)=>b.rate-a.rate)[0];
+
+  let daysActive = 0;
+  const seen = new Set();
+  data.books.flatMap(b=>b.sessions||[]).filter(s=>s.date.startsWith(year)).forEach(s=>seen.add(s.date));
+  (data.routines||[]).forEach(r=>(r.entries||[]).forEach(e=>{ if(e.date.startsWith(year) && routineSuccess(r,e)) seen.add(e.date); }));
+  daysActive = seen.size;
+
+  body.innerHTML = `
+    <div class="retro-grid">
+      <div class="retro-stat"><b>${booksDone}</b><span>완독</span></div>
+      <div class="retro-stat"><b>${Math.round(readingMinutes/60*10)/10}</b><span>독서 시간</span></div>
+      <div class="retro-stat"><b>${daysActive}</b><span>뭔가 해낸 날</span></div>
+    </div>
+    ${mostConsistent ? `<div class="early-chip" style="margin-top:14px;">🏆 가장 꾸준했던 습관: ${mostConsistent.r.icon} ${escapeHtml(mostConsistent.r.name)} (달성률 ${mostConsistent.rate}%)</div>` : ""}
+    <div class="retro-sec"><h4>습관별 기록</h4>
+      ${rows.map(x=>`
+        <div class="retro-line">
+          <span class="rl-title">${x.r.icon} ${escapeHtml(x.r.name)}</span>
+          <span>${x.count}일 기록 · 달성률 ${x.rate}% · 최장 연속 ${routineStreak(x.r)}일</span>
+        </div>`).join("") || `<p class="rc-note">아직 기록이 없어요.</p>`}
+    </div>
+  `;
+}
+
 function renderMboMain(){
   const grid = document.getElementById("mboGrid");
   const totalBooks = totalReadCount();
@@ -761,6 +861,7 @@ function renderMboMain(){
       if(id === "reading") showHome(); else showBridge(id);
     });
   });
+  renderMboCombinedHeatmap();
 }
 
 function routineMiniHeatmapHtml(r, days){
@@ -774,6 +875,116 @@ function routineMiniHeatmapHtml(r, days){
   return cells;
 }
 
+function routineWeekCount(r){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const wkStart = new Date(today); wkStart.setDate(wkStart.getDate() - ((wkStart.getDay()+6)%7));
+  return (r.entries||[]).filter(e => e.date >= dkey(wkStart) && routineSuccess(r, e)).length;
+}
+function routineSuccessCount(r){ return (r.entries||[]).filter(e=>routineSuccess(r,e)).length; }
+
+const routineWizard = {}; // routineId -> { step, timesPerWeek }
+function startRoutineWizard(routineId){
+  routineWizard[routineId] = { step: 0, timesPerWeek: null };
+  renderBridge(routineId);
+}
+function routineGoalWizardHtml(routineId){
+  const w = routineWizard[routineId] || { step: 0 };
+  if(w.step === 0){
+    return `
+      <h3 style="margin-top:0;">아직 목표가 없어요 — 하나 정해볼까요?</h3>
+      <p class="rc-note" style="margin-top:0;">일주일에 몇 번을 목표로 하고 싶으세요?</p>
+      <div class="wizard-choices">
+        <button class="wizard-choice" data-times="7" type="button">매일 (7회)</button>
+        <button class="wizard-choice" data-times="5" type="button">주 5회</button>
+        <button class="wizard-choice" data-times="3" type="button">주 3회</button>
+        <button class="wizard-choice" data-times="1" type="button">주 1회</button>
+      </div>`;
+  }
+  return `
+    <h3 style="margin-top:0;">기간 목표도 정해볼까요?</h3>
+    <p class="rc-note" style="margin-top:0;">예: "30일만 꾸준히 해보기" 같은 도전 목표예요. 나중에 언제든 바꿀 수 있어요.</p>
+    <div class="wizard-choices">
+      <button class="wizard-choice" data-streak="30" type="button">30일 도전</button>
+      <button class="wizard-choice" data-streak="60" type="button">60일 도전</button>
+      <button class="wizard-choice" data-streak="100" type="button">100일 도전</button>
+      <button class="wizard-choice" data-streak="0" type="button">설정 안 함</button>
+    </div>`;
+}
+function wireGoalWizard(routineId){
+  const w = routineWizard[routineId];
+  document.querySelectorAll(".wizard-choice[data-times]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      w.timesPerWeek = parseInt(btn.dataset.times);
+      w.step = 1;
+      renderBridge(routineId);
+    });
+  });
+  document.querySelectorAll(".wizard-choice[data-streak]").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      const streakTarget = parseInt(btn.dataset.streak) || null;
+      const r = getRoutine(routineId);
+      r.goal = { timesPerWeek: w.timesPerWeek, streakTarget };
+      delete routineWizard[routineId];
+      await saveData();
+      renderBridge(routineId);
+    });
+  });
+}
+
+function routineRewardsHtml(r){
+  const today = new Date(); today.setHours(0,0,0,0);
+  let stickers = "";
+  for(let i=13;i>=0;i--){
+    const d = new Date(today); d.setDate(d.getDate()-i);
+    const ok = routineSuccess(r, routineEntry(r, dkey(d)));
+    stickers += `<div class="sticker-cell"><div class="sticker ${ok?"on c"+(d.getDate()%5):""} ${i===0?"today":""}" title="${dkey(d)}">${ok?"★":""}</div><span>${i===0?"오늘":d.getDate()}</span></div>`;
+  }
+  const successCount = routineSuccessCount(r);
+  const milestones = [1,7,30,50,100];
+  const badges = milestones.map(m=>`<div class="badge ${successCount>=m?"on":"locked"}"><div class="badge-icon">${successCount>=m?"🏅":"🔒"}</div><b>${m}회</b><span>달성</span></div>`).join("");
+  return `
+    <div class="reward-card">
+      <div class="rc-head"><h3>최근 14일</h3><span class="rc-sub">누적 ${successCount}회 달성</span></div>
+      <div class="sticker-row">${stickers}</div>
+    </div>
+    <div class="reward-card">
+      <div class="rc-head"><h3>뱃지</h3></div>
+      <div class="badge-row">${badges}</div>
+    </div>`;
+}
+
+function motivationLine(r, streak, todayOk){
+  if(todayOk) return "오늘 몫은 끝냈어요. 잘하고 있어요 🙌";
+  if(streak >= 30) return `${streak}일째 이어가는 중이에요. 이 정도면 습관이 됐어요!`;
+  if(streak >= 7) return `${streak}일 연속! 일주일을 넘겼어요.`;
+  if(streak >= 3) return `${streak}일째예요. 사흘의 벽을 넘고 있어요.`;
+  if(streak >= 1) return "좋은 출발이에요. 오늘도 이어가 볼까요?";
+  return "오늘 한 번으로 다시 시작할 수 있어요.";
+}
+
+function weeklyGoalHtml(r, routineId){
+  const goal = r.goal || {};
+  if(!goal.timesPerWeek){
+    return `<div class="goal-nudge"><p class="rc-note" style="margin:0 0 10px;">💡 아직 이 습관엔 구체적인 목표가 없어요. 목표를 정하면 꾸준히 하기가 훨씬 쉬워져요.</p>
+      <button class="home-cta" id="startGoalWizardBtn" type="button">목표 정하기 →</button></div>`;
+  }
+  const wk = routineWeekCount(r);
+  const pct = Math.min(100, Math.round(wk/goal.timesPerWeek*100));
+  let streakBar = "";
+  if(goal.streakTarget){
+    const cur = routineStreak(r);
+    const spct = Math.min(100, Math.round(cur/goal.streakTarget*100));
+    streakBar = `
+      <div class="rc-foot" style="margin-top:14px;">${goal.streakTarget}일 도전 · ${cur}/${goal.streakTarget}일</div>
+      <div class="op-bar-track"><div class="op-bar-fill" style="width:${spct}%"></div></div>`;
+  }
+  return `
+    <div class="rc-head"><h3>이번 주 목표</h3><span class="rc-sub">${wk} / ${goal.timesPerWeek}회${pct>=100?" · 달성! 🎉":""}</span></div>
+    <div class="op-bar-track"><div class="op-bar-fill" style="width:${pct}%"></div></div>
+    ${streakBar}
+    <div class="rc-foot" style="margin-top:12px;"><button class="icon-btn" id="editGoalBtn" type="button">목표 수정</button></div>`;
+}
+
 function renderBridge(routineId){
   const r = getRoutine(routineId);
   if(!r) return;
@@ -785,8 +996,23 @@ function renderBridge(routineId){
 
   const todayKey = dkey(new Date());
   const entry = routineEntry(r, todayKey);
+  const todayOk = routineSuccess(r, entry);
+  document.getElementById("bridgeMotivation").textContent = motivationLine(r, streak, todayOk);
   document.getElementById("bridgeTodayLabel").textContent = todayKey;
   const widget = document.getElementById("bridgeWidget");
+
+  const goalSection = document.getElementById("bridgeGoalSection");
+  if(routineWizard[routineId]){
+    goalSection.innerHTML = routineGoalWizardHtml(routineId);
+    wireGoalWizard(routineId);
+  }else{
+    goalSection.innerHTML = weeklyGoalHtml(r, routineId);
+    const startBtn = document.getElementById("startGoalWizardBtn");
+    if(startBtn) startBtn.addEventListener("click", ()=> startRoutineWizard(routineId));
+    const editBtn = document.getElementById("editGoalBtn");
+    if(editBtn) editBtn.addEventListener("click", ()=> startRoutineWizard(routineId));
+  }
+  document.getElementById("bridgeRewards").innerHTML = routineRewardsHtml(r);
 
   if(r.kind === "check"){
     const done = !!(entry && entry.done);
@@ -832,10 +1058,20 @@ function renderRoutineDetail(routineId){
   const entries = (r.entries||[]).slice().sort((a,b)=> b.date.localeCompare(a.date));
   const successCount = entries.filter(e=>routineSuccess(r,e)).length;
   const rate = entries.length ? Math.round(successCount/entries.length*100) : 0;
+  const dStreak = routineStreak(r);
   document.getElementById("routineDetailStats").innerHTML = `
-    <div class="retro-stat"><b>${routineStreak(r)}</b><span>연속일</span></div>
+    <div class="retro-stat"><b>${dStreak}</b><span>연속일</span></div>
     <div class="retro-stat"><b>${entries.length}</b><span>총 기록일</span></div>
     <div class="retro-stat"><b>${rate}%</b><span>달성률</span></div>`;
+  let statsEl = document.getElementById("routineDetailStats");
+  let moEl = document.getElementById("routineDetailMotivation");
+  if(!moEl){
+    moEl = document.createElement("p");
+    moEl.id = "routineDetailMotivation";
+    moEl.className = "motivation-line";
+    statsEl.insertAdjacentElement("afterend", moEl);
+  }
+  moEl.textContent = motivationLine(r, dStreak, routineSuccess(r, routineEntry(r, dkey(new Date()))));
 
   const editDate = document.getElementById("routineEditDate");
   editDate.value = dkey(new Date());
@@ -1414,6 +1650,9 @@ document.getElementById("baselineInput").addEventListener("change", async (e)=>{
 document.getElementById("enterLibraryBtn").addEventListener("click", showLibrary);
 document.getElementById("backToMboBtn").addEventListener("click", showMbo);
 document.getElementById("bridgeBackBtn").addEventListener("click", showMbo);
+document.getElementById("openLifeRetroBtn").addEventListener("click", openLifeRetro);
+document.getElementById("closeLifeRetroBtn").addEventListener("click", ()=> document.getElementById("lifeRetroModal").classList.add("hidden"));
+document.getElementById("lifeRetroYear").addEventListener("change", (e)=> renderLifeRetro(e.target.value));
 document.getElementById("routineDetailBackBtn").addEventListener("click", ()=> showBridge(currentRoutineDetailId));
 document.getElementById("goRoutineDetailBtn").addEventListener("click", ()=> showRoutineDetail(currentBridgeId));
 document.getElementById("openShareBtn").addEventListener("click", openShareModal);
